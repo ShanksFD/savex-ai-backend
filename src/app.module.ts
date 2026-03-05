@@ -8,12 +8,14 @@ import { PresaleModule } from "./presale/presale.module";
 import { PromoCodesModule } from "./promo-codes/promo-codes.module";
 import { TransactionsModule } from "./transactions/transactions.module";
 import { PaymentSessionsModule } from "./payment-sessions/payment-sessions.module";
+import { EmailModule } from "./email/email.module";
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    EmailModule,
     AuthModule,
     UsersModule,
     PresaleModule,
