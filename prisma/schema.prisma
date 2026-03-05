@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum SessionStatus {
+  AWAITING_PAYMENT
+  PAYMENT_DETECTED
+  CONFIRMED
+  EXPIRED
+  CANCELLED
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  firstName String?
+  lastName  String?
+  phone     String?
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+  sessions     PaymentSession[]
+}
+
+model PresaleStage {
+  id       Int     @id @default(autoincrement())
+  stage    Int     @unique
+  price    Float
+  bonus    Float
+  target   Float
+  isActive Boolean @default(false)
+
+  transactions Transaction[]
+}
+
+model PromoCode {
+  id        String    @id @default(uuid())
+  code      String    @unique
+  value     Float
+  maxUses   Int?
+  usedCount Int       @default(0)
+  isActive  Boolean   @default(true)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  transactions Transaction[]
+}
+
+model Transaction {
+  id              String            @id @default(uuid())
+  userId          String
+  stageId         Int
+  promoCodeId     String?
+  paymentCurrency String
+  usdAmount       Float
+  tokenPrice      Float
+  tokensAmount    Float
+  bonusTokens     Float
+  totalTokens     Float
+  status          TransactionStatus @default(PENDING)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id])
+  stage     PresaleStage  @relation(fields: [stageId], references: [id])
+  promoCode PromoCode?    @relation(fields: [promoCodeId], references: [id])
+  session   PaymentSession?
+}
+
+model PaymentSession {
+  id             String        @id @default(uuid())
+  purchaseId     String        @unique
+  userId         String
+  walletAddress  String
+  expectedAmount Float
+  currency       String
+  status         SessionStatus @default(AWAITING_PAYMENT)
+  expiresAt      DateTime
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  transaction Transaction @relation(fields: [purchaseId], references: [id])
+  user        User        @relation(fields: [userId], references: [id])
+}
