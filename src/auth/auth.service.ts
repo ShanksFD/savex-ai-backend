@@ -129,6 +129,39 @@ export class AuthService {
     };
   }
 
+  async impersonate(userId: string) {
+    // Only fetch the user details, we implicitly trust the admin calling this endpoint.
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException("User not found");
+    }
+
+    if (user.status === "SUSPENDED") {
+      throw new BadRequestException("Cannot impersonate a suspended account");
+    }
+
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.tokenVersion,
+    );
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+      },
+      ...tokens,
+    };
+  }
+
   async refresh(refreshToken: string) {
     try {
       const payload = this.jwtService.verify(refreshToken, {

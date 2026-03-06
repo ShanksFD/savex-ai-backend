@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Body, Query, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Post,
+  Get,
+  Body,
+  Query,
+  UseGuards,
+  Param,
+} from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { AuthService } from "./auth.service";
 import {
@@ -10,7 +18,9 @@ import {
   VerifyEmailDto,
   ResendVerificationDto,
 } from "./dto";
-import { CurrentUser } from "../common/decorators";
+import { CurrentUser, Roles } from "../common/decorators";
+import { RolesGuard } from "../common/guards";
+import { Role } from "@prisma/client";
 
 @Controller("auth")
 export class AuthController {
@@ -55,5 +65,12 @@ export class AuthController {
   @Get("me")
   getMe(@CurrentUser() user: any) {
     return user;
+  }
+
+  @UseGuards(AuthGuard("jwt"), RolesGuard)
+  @Roles(Role.ADMIN)
+  @Post("impersonate/:userId")
+  impersonate(@Param("userId") userId: string) {
+    return this.authService.impersonate(userId);
   }
 }
