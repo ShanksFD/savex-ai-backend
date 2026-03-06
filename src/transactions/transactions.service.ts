@@ -1,9 +1,14 @@
-import { Injectable, BadRequestException } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import { PresaleService } from "../presale/presale.service";
 import { PromoCodesService } from "../promo-codes/promo-codes.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
+import { TransactionStatus } from "@prisma/client";
 
 const PAYMENT_WALLETS: Record<string, string> = {
   USDT: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
@@ -54,9 +59,15 @@ export class TransactionsService {
     const walletAddress =
       PAYMENT_WALLETS[dto.paymentCurrency] || PAYMENT_WALLETS.USDT;
 
+    const customTransactionId =
+      "TXN" +
+      Date.now() +
+      Math.random().toString(36).substring(2, 6).toUpperCase();
+
     const result = await this.prisma.$transaction(async (tx) => {
       const transaction = await tx.transaction.create({
         data: {
+          id: customTransactionId,
           userId,
           stageId: currentStage.id,
           promoCodeId: promoCodeEntity?.id || null,
@@ -107,18 +118,57 @@ export class TransactionsService {
     };
   }
 
-  async findAllByUser(userId: string) {
-    return this.prisma.transaction.findMany({
-      where: { userId },
-      include: {
-        stage: { select: { stage: true, price: true } },
-        promoCode: { select: { code: true, value: true } },
-        session: {
-          select: { id: true, status: true, expiresAt: true },
+  async findAllByUser(
+    userId: string,
+    params: {
+      page?: number;
+      limit?: number;
+      status?: string;
+      search?: string;
+    } = {},
+  ) {
+    const page = Math.max(1, params.page || 1);
+    const limit = Math.min(100, Math.max(1, params.limit || 10));
+    const skip = (page - 1) * limit;
+
+    const where: any = { userId };
+
+    if (params.status) {
+      where.status = params.status as TransactionStatus;
+    }
+
+    if (params.search) {
+      const search = params.search;
+      where.OR = [
+        { id: { contains: search, mode: "insensitive" } },
+        { paymentCurrency: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where,
+        include: {
+          stage: { select: { stage: true, price: true } },
+          promoCode: { select: { code: true, value: true } },
+          session: {
+            select: { id: true, status: true, expiresAt: true },
+          },
         },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.transaction.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string, userId: string) {
@@ -138,30 +188,87 @@ export class TransactionsService {
     return transaction;
   }
 
-  async findAllAdmin() {
-    return this.prisma.transaction.findMany({
-      include: {
-        user: {
-          select: { id: true, email: true, firstName: true, lastName: true },
+  async findAllAdmin(
+    params: {
+      page?: number;
+      limit?: number;
+      status?: string;
+      search?: string;
+    } = {},
+  ) {
+    const page = Math.max(1, params.page || 1);
+    const limit = Math.min(100, Math.max(1, params.limit || 10));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    if (params.status) {
+      where.status = params.status as TransactionStatus;
+    }
+
+    if (params.search) {
+      const search = params.search;
+      where.OR = [
+        { id: { contains: search, mode: "insensitive" } },
+        { paymentCurrency: { contains: search, mode: "insensitive" } },
+        { user: { email: { contains: search, mode: "insensitive" } } },
+        { user: { firstName: { contains: search, mode: "insensitive" } } },
+        { user: { lastName: { contains: search, mode: "insensitive" } } },
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.transaction.findMany({
+        where,
+        include: {
+          user: {
+            select: { id: true, email: true, firstName: true, lastName: true },
+          },
+          stage: { select: { stage: true, price: true } },
+          promoCode: { select: { code: true, value: true } },
+          session: { select: { id: true, status: true } },
         },
-        stage: { select: { stage: true, price: true } },
-        session: { select: { id: true, status: true } },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      this.prisma.transaction.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async getStats() {
-    const [totalTransactions, totalAmount, totalTokens] = await Promise.all([
+    const [
+      totalTransactions,
+      totalAmount,
+      totalTokens,
+      completedTransactions,
+      pendingTransactions,
+    ] = await Promise.all([
       this.prisma.transaction.count(),
       this.prisma.transaction.aggregate({ _sum: { usdAmount: true } }),
       this.prisma.transaction.aggregate({ _sum: { totalTokens: true } }),
+      this.prisma.transaction.count({
+        where: { status: { in: ["COMPLETED", "CONFIRMED"] } },
+      }),
+      this.prisma.transaction.count({
+        where: { status: "PENDING" },
+      }),
     ]);
 
     return {
       totalTransactions,
       totalUsdRaised: totalAmount._sum.usdAmount || 0,
       totalTokensSold: totalTokens._sum.totalTokens || 0,
+      completedTransactions,
+      pendingTransactions,
     };
   }
 
@@ -197,9 +304,15 @@ export class TransactionsService {
   }
 
   async getUserStats(userId: string) {
-    const [transactionCount, totalAmount, totalTokens] = await Promise.all([
+    const [
+      transactionCount,
+      totalAmount,
+      totalTokens,
+      pendingTransactions,
+      completedTransactions,
+    ] = await Promise.all([
       this.prisma.transaction.count({
-        where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+        where: { userId },
       }),
       this.prisma.transaction.aggregate({
         where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
@@ -209,12 +322,42 @@ export class TransactionsService {
         where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
         _sum: { totalTokens: true },
       }),
+      this.prisma.transaction.count({
+        where: { userId, status: "PENDING" },
+      }),
+      this.prisma.transaction.count({
+        where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+      }),
     ]);
 
     return {
       transactionCount,
       totalInvested: totalAmount._sum.usdAmount || 0,
       totalTokens: totalTokens._sum.totalTokens || 0,
+      pendingTransactions,
+      completedTransactions,
     };
+  }
+
+  async updateStatus(id: string, status: string) {
+    const transaction = await this.prisma.transaction.findUnique({
+      where: { id },
+    });
+
+    if (!transaction) {
+      throw new NotFoundException("Transaction not found");
+    }
+
+    return this.prisma.transaction.update({
+      where: { id },
+      data: { status: status as TransactionStatus },
+      include: {
+        user: {
+          select: { id: true, email: true, firstName: true, lastName: true },
+        },
+        stage: { select: { stage: true, price: true } },
+        session: { select: { id: true, status: true } },
+      },
+    });
   }
 }

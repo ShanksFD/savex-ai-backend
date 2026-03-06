@@ -1,4 +1,12 @@
-import { Controller, Get, Patch, Param, Body, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Patch,
+  Param,
+  Body,
+  UseGuards,
+  Query,
+} from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { UsersService } from "./users.service";
 import { UpdateUserDto } from "./dto/update-user.dto";
@@ -19,8 +27,20 @@ export class UsersController {
 
   @Get()
   @Roles(Role.ADMIN)
-  findAll() {
-    return this.usersService.findAll();
+  findAll(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("search") search?: string,
+    @Query("investedFilter") investedFilter?: string,
+    @Query("sortBy") sortBy?: string,
+  ) {
+    return this.usersService.findAll({
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      search,
+      investedFilter,
+      sortBy,
+    });
   }
 
   @Get(":id")

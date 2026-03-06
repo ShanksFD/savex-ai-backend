@@ -1,6 +1,12 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import * as bcrypt from "bcrypt";
+import { Prisma, Role } from "@prisma/client";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { accountSuspendedTemplate } from "../email/email.templates";
 
@@ -24,22 +30,85 @@ export class UsersService {
     private emailService: EmailService,
   ) {}
 
-  async findAll() {
-    const users = await this.prisma.user.findMany({
-      select: {
-        ...USER_SELECT,
-        transactions: {
-          select: {
-            usdAmount: true,
-            totalTokens: true,
-            status: true,
+  async findAll(
+    params: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      investedFilter?: string;
+      sortBy?: string;
+    } = {},
+  ) {
+    const page = Math.max(1, params.page || 1);
+    const limit = Math.min(100, Math.max(1, params.limit || 10));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.UserWhereInput = { role: Role.USER };
+
+    if (params.search) {
+      where.OR = [
+        { email: { contains: params.search, mode: "insensitive" } },
+        { firstName: { contains: params.search, mode: "insensitive" } },
+        { lastName: { contains: params.search, mode: "insensitive" } },
+        { phone: { contains: params.search, mode: "insensitive" } },
+      ];
+    }
+
+    if (params.investedFilter && params.investedFilter !== "All") {
+      if (params.investedFilter === "Invested") {
+        where.transactions = {
+          some: {
+            status: { in: ["CONFIRMED", "COMPLETED"] },
+          },
+        };
+      } else if (params.investedFilter === "Not Invested") {
+        where.transactions = {
+          none: {
+            status: { in: ["CONFIRMED", "COMPLETED"] },
+          },
+        };
+      }
+    }
+
+    let orderBy: Prisma.UserOrderByWithRelationInput = { createdAt: "desc" };
+    switch (params.sortBy) {
+      case "oldest":
+        orderBy = { createdAt: "asc" };
+        break;
+      case "name_asc":
+        orderBy = { firstName: "asc" };
+        break;
+      case "name_desc":
+        orderBy = { firstName: "desc" };
+        break;
+      case "newest":
+      default:
+        // Calculated/relational fields like totalInvested and totalSVX fallback to newest
+        orderBy = { createdAt: "desc" };
+        break;
+    }
+
+    const [users, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        select: {
+          ...USER_SELECT,
+          transactions: {
+            select: {
+              usdAmount: true,
+              totalTokens: true,
+              status: true,
+            },
           },
         },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+        orderBy,
+        skip,
+        take: limit,
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
-    return users.map((user) => {
+    const data = users.map((user) => {
       const confirmedTx = user.transactions.filter(
         (t) => t.status === "CONFIRMED" || t.status === "COMPLETED",
       );
@@ -63,6 +132,14 @@ export class UsersService {
         isInvested: totalInvested > 0,
       };
     });
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string) {

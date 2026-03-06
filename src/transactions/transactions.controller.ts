@@ -1,7 +1,17 @@
-import { Controller, Get, Post, Param, Body, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { AuthGuard } from "@nestjs/passport";
 import { TransactionsService } from "./transactions.service";
 import { CreateTransactionDto } from "./dto/create-transaction.dto";
+import { UpdateTransactionStatusDto } from "./dto/update-transaction-status.dto";
 import { CurrentUser, Roles } from "../common/decorators";
 import { RolesGuard } from "../common/guards";
 import { Role } from "@prisma/client";
@@ -17,15 +27,36 @@ export class TransactionsController {
   }
 
   @Get()
-  findAll(@CurrentUser("id") userId: string) {
-    return this.transactionsService.findAllByUser(userId);
+  findAll(
+    @CurrentUser("id") userId: string,
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+  ) {
+    return this.transactionsService.findAllByUser(userId, {
+      page: page ? parseInt(page) : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+      status,
+      search,
+    });
   }
 
   @Get("admin/all")
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN)
-  findAllAdmin() {
-    return this.transactionsService.findAllAdmin();
+  findAllAdmin(
+    @Query("page") page?: string,
+    @Query("limit") limit?: string,
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+  ) {
+    return this.transactionsService.findAllAdmin({
+      page: page ? parseInt(page) : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+      status,
+      search,
+    });
   }
 
   @Get("admin/stats")
@@ -33,6 +64,16 @@ export class TransactionsController {
   @Roles(Role.ADMIN)
   getStats() {
     return this.transactionsService.getStats();
+  }
+
+  @Patch("admin/:id/status")
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  updateStatus(
+    @Param("id") id: string,
+    @Body() dto: UpdateTransactionStatusDto,
+  ) {
+    return this.transactionsService.updateStatus(id, dto.status);
   }
 
   @Get("active-session")
