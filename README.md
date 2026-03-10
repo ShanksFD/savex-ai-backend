@@ -91,6 +91,7 @@ Server runs on `http://localhost:3001` with all routes prefixed under `/api`.
 | `MIN_CONFIRMATIONS_ETH`            | `2`                             | Min block confirmations for ETH                    |
 | `MIN_CONFIRMATIONS_ERC20`          | `2`                             | Min block confirmations for ERC-20                 |
 | `SWEEP_ENABLED`                    | `true`                          | Enable auto-sweep to treasury                      |
+| `SWEEP_MAX_RETRIES`               | `2`                             | Max automatic retries for pre-broadcast sweep failures before marking session FAILED |
 | `SWEEP_MIN_ETH_RESERVE_WEI`       | `100000000000000`               | Min ETH balance before gas topup for token sweep   |
 | `GAS_TOPUP_AMOUNT_WEI`            | `500000000000000`               | ETH amount to send for gas topup                   |
 
@@ -141,18 +142,26 @@ User Request                  Backend
 
 ### Session Statuses
 
-| Status             | Meaning                                    |
-| ------------------ | ------------------------------------------ |
-| `AWAITING_PAYMENT` | Waiting for user to send funds             |
-| `PAYMENT_DETECTED` | Tx found but insufficient confirmations    |
-| `UNDERPAID`        | Received amount < expected amount          |
-| `CONFIRMED`        | Payment confirmed with enough blocks       |
-| `SWEEP_PENDING`    | Ready to sweep funds to treasury           |
-| `SWEEPING`         | Sweep tx broadcast, awaiting confirmation  |
-| `SETTLED`          | Sweep confirmed, payment fully complete    |
-| `EXPIRED`          | Session expired without payment            |
-| `CANCELLED`        | Cancelled by user                          |
-| `FAILED`           | Unrecoverable error                        |
+| Status             | Meaning                                    | User-facing? |
+| ------------------ | ------------------------------------------ | ------------ |
+| `AWAITING_PAYMENT` | Waiting for user to send funds             | Yes          |
+| `PAYMENT_DETECTED` | Tx found but insufficient confirmations    | Yes          |
+| `UNDERPAID`        | Received amount < expected amount          | Yes (warning)|
+| `CONFIRMED`        | Payment confirmed with enough blocks       | Yes (success)|
+| `SWEEP_PENDING`    | Ready to sweep funds to treasury           | No (internal)|
+| `SWEEPING`         | Sweep tx broadcast, awaiting confirmation  | No (internal)|
+| `SETTLED`          | Sweep confirmed, payment fully complete    | No (internal)|
+| `EXPIRED`          | Session expired without payment            | Yes          |
+| `CANCELLED`        | Cancelled by user                          | Yes          |
+| `FAILED`           | Unrecoverable error                        | Yes          |
+
+### User Payment Lifecycle
+
+From the user's perspective, a successful payment ends at **CONFIRMED**. The statuses `SWEEP_PENDING`, `SWEEPING`, and `SETTLED` are internal operational states that the frontend displays as "Payment Confirmed" with a success UI. Users are never shown sweep progress.
+
+The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected -> Confirmed**.
+
+`UNDERPAID` interrupts the flow at the "Detected" step with a warning -- it is never shown as a success state.
 
 ## NPM Scripts
 
@@ -264,6 +273,106 @@ User Request                  Backend
 | GET    | `/api/users/:id`         | Admin | Get user details                 |
 | PATCH  | `/api/users/:id`         | Admin | Update a user (including status) |
 
+### Admin -- Sweep Manager
+
+| Method | Path                          | Auth  | Description                         |
+| ------ | ----------------------------- | ----- | ----------------------------------- |
+| GET    | `/api/admin/sweeps/stats`     | Admin | Get sweep operation statistics      |
+| GET    | `/api/admin/sweeps`           | Admin | List all sweep operations           |
+| GET    | `/api/admin/sweeps/:id`       | Admin | Get sweep operation details         |
+| POST   | `/api/admin/sweeps/:id/retry` | Admin | Retry a failed sweep operation      |
+
+#### POST /api/admin/sweeps/:id/retry
+
+Resets a sweep operation for retry by the cron processor. This is an admin override that works regardless of the automatic retry limit.
+
+Fields reset on retry:
+- `retryCount` += 1
+- `error` = null
+- `status` = PENDING
+- `sweepTxHash` = null
+- `gasTopupTxHash` = null
+
+If the parent `PaymentSession` is in `FAILED` status, it is automatically moved back to `SWEEP_PENDING` so the cron picks it up.
+
+### Admin -- Payment Sessions (Inspector + Flow Control)
+
+| Method | Path                                    | Auth  | Description                                 |
+| ------ | --------------------------------------- | ----- | ------------------------------------------- |
+| GET    | `/api/admin/payment-sessions/stats`     | Admin | Get payment session statistics              |
+| GET    | `/api/admin/payment-sessions`           | Admin | List all payment sessions (paginated)       |
+| GET    | `/api/admin/payment-sessions/:id`       | Admin | Get full session detail with all relations  |
+| PATCH  | `/api/admin/payment-sessions/:id`       | Admin | Modify session fields (with validation)     |
+
+#### PATCH /api/admin/payment-sessions/:id
+
+Allows modifying: `status`, `paymentTxHash`, `confirmations`, `receivedAmountBaseUnits`, `metadata`.
+
+**Status transition validation** is enforced. Invalid transitions (e.g. `EXPIRED` -> `CONFIRMED`, `CANCELLED` -> `CONFIRMED`) are rejected with a `400 Bad Request`. Allowed transitions:
+
+| From               | Allowed targets                                           |
+| ------------------ | --------------------------------------------------------- |
+| `AWAITING_PAYMENT` | PAYMENT_DETECTED, UNDERPAID, EXPIRED, CANCELLED, FAILED   |
+| `PAYMENT_DETECTED` | CONFIRMED, UNDERPAID, FAILED, AWAITING_PAYMENT            |
+| `UNDERPAID`        | AWAITING_PAYMENT, FAILED                                  |
+| `CONFIRMED`        | SWEEP_PENDING, FAILED                                     |
+| `SWEEP_PENDING`    | SWEEPING, FAILED                                          |
+| `SWEEPING`         | SETTLED, FAILED                                           |
+| `EXPIRED`          | AWAITING_PAYMENT (admin recovery)                         |
+| `CANCELLED`        | AWAITING_PAYMENT (admin recovery)                         |
+| `FAILED`           | AWAITING_PAYMENT, SWEEP_PENDING (admin recovery)          |
+| `SETTLED`          | (no transitions allowed)                                  |
+
+### Admin -- Presale Stages
+
+| Method | Path                                       | Auth  | Description                                 |
+| ------ | ------------------------------------------ | ----- | ------------------------------------------- |
+| GET    | `/api/admin/presale-stages/stats`          | Admin | Get presale stage statistics                |
+| GET    | `/api/admin/presale-stages`                | Admin | List all presale stages (ordered by stage)  |
+| PATCH  | `/api/admin/presale-stages/:id`            | Admin | Update stage price, bonus, or target        |
+| POST   | `/api/admin/presale-stages/:id/activate`   | Admin | Set a stage as the active presale stage     |
+
+#### PATCH /api/admin/presale-stages/:id
+
+Allows modifying: `price`, `bonus`, `target`. All fields are optional numeric values.
+
+#### POST /api/admin/presale-stages/:id/activate
+
+Atomically deactivates all stages and activates the specified stage. Uses a Prisma `$transaction` to ensure only one stage is active at any time.
+
+## Admin Tools
+
+### Sweep Manager
+
+Accessible at `/dashboard/sweeps` in the frontend admin panel. Displays all `SweepOperation` records with:
+
+- Payment session, user, transaction details
+- Asset, amount, sweep status, retry count
+- Gas topup and sweep transaction hashes
+- Error messages, created/updated timestamps
+- **Retry button** to reset failed sweeps for another attempt
+
+### Payment Session Inspector
+
+Accessible at `/dashboard/payment-sessions-admin`. Provides a searchable, filterable table of all payment sessions with drill-down detail dialogs showing:
+
+- Full session fields (deposit address, amounts, hashes, confirmations)
+- Related user, transaction, quote, and sweep operation data
+- Error reasons when present
+
+### Flow Control
+
+Accessible at `/dashboard/flow-control`. Allows admins to look up a payment session by ID and modify its state for recovery or debugging purposes. All status changes are validated server-side against the transition map above.
+
+### Presale Stage Manager
+
+Accessible at `/dashboard/presale-stages`. Provides a complete admin interface for managing presale stages:
+
+- View all 50 stages with price, bonus %, target, and active status
+- Edit stage parameters (price, bonus, target) via a dialog
+- Activate any stage as the current presale stage (atomically deactivates all others)
+- MetricCards showing active stage number, current token price, bonus %, and total target across all stages
+
 ## Database Schema
 
 ### Models
@@ -275,7 +384,7 @@ User Request                  Backend
 - **Quote** -- locked price snapshot: usdAmount (Decimal), asset, chain, assetPriceUsd (Decimal), expectedAmount, expectedAmountBaseUnits, tokenDecimals, expiresAt, status
 - **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status
 - **DerivationCounter** -- atomic counter for HD wallet derivation indices
-- **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status
+- **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status, retryCount. Has `@@index([status])` for efficient cron queries.
 
 ### Enums
 
@@ -289,7 +398,7 @@ User Request                  Backend
 ### Setup
 
 1. Get a Sepolia Alchemy RPC URL from [alchemy.com](https://www.alchemy.com/)
-2. Generate a test mnemonic (or use the default test mnemonic in `.env.example`)
+2. Generate a **secret** test mnemonic (see `.env.example` for the command -- do NOT use the Hardhat default)
 3. Fund derived addresses with Sepolia ETH from a faucet
 4. Deploy mock ERC-20 tokens (USDT/USDC) on Sepolia, or use existing test tokens
 5. Set token contract addresses in `.env`
@@ -302,7 +411,7 @@ CHAIN_ID=11155111
 ALCHEMY_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 USDT_CONTRACT_ADDRESS=0x...your_mock_usdt...
 USDC_CONTRACT_ADDRESS=0x...your_mock_usdc...
-HD_MASTER_MNEMONIC="test test test test test test test test test test test junk"
+HD_MASTER_MNEMONIC="your-own-secret-mnemonic-here"
 TREASURY_ADDRESS=0x...your_sepolia_treasury...
 GAS_FUND_PRIVATE_KEY=0x...your_gas_fund_pk...
 GAS_FUND_ADDRESS=0x...your_gas_fund_address...
@@ -338,6 +447,7 @@ src/
 ├── quotes/                    # Internal quote service (price snapshot)
 ├── pricing/                   # CoinGecko price fetching
 ├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep)
+├── admin/                     # Admin endpoints (sweeps, sessions, flow control, presale stages)
 ├── email/                     # Email service (Resend + SMTP)
 └── prisma/                    # PrismaService (global)
 ```

@@ -199,4 +199,6 @@ model SweepOperation {
   updatedAt        DateTime    @updatedAt
 
   paymentSession PaymentSession @relation(fields: [paymentSessionId], references: [id])
+
+  @@index([status])
 }
