@@ -1,27 +1,29 @@
 import {
   Injectable,
+  Logger,
   BadRequestException,
   NotFoundException,
-} from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import { PrismaService } from "../prisma/prisma.service";
-import { PresaleService } from "../presale/presale.service";
-import { PromoCodesService } from "../promo-codes/promo-codes.service";
-import { CreateTransactionDto } from "./dto/create-transaction.dto";
-import { TransactionStatus } from "@prisma/client";
-
-const PAYMENT_WALLETS: Record<string, string> = {
-  USDT: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-  USDC: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-  ETH: "0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-};
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma, TransactionStatus } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { PresaleService } from '../presale/presale.service';
+import { PromoCodesService } from '../promo-codes/promo-codes.service';
+import { QuotesService } from '../quotes/quotes.service';
+import { EvmPaymentService } from '../evm/evm.service';
+import { CreateTransactionDto } from './dto/create-transaction.dto';
 
 @Injectable()
 export class TransactionsService {
+  private readonly logger = new Logger(TransactionsService.name);
+
   constructor(
     private prisma: PrismaService,
     private presaleService: PresaleService,
     private promoCodesService: PromoCodesService,
+    private quotesService: QuotesService,
+    private evmService: EvmPaymentService,
     private configService: ConfigService,
   ) {}
 
@@ -34,13 +36,10 @@ export class TransactionsService {
     }
 
     const tokensAmount = dto.usdAmount / currentStage.price;
-
     const stageBonusTokens = (tokensAmount * currentStage.bonus) / 100;
-
     const promoBonusTokens = promoCodeRecord
       ? (tokensAmount * promoCodeRecord.value) / 100
       : 0;
-
     const bonusTokens = stageBonusTokens + promoBonusTokens;
     const totalTokens = tokensAmount + bonusTokens;
 
@@ -50,21 +49,51 @@ export class TransactionsService {
         })
       : null;
 
+    // Step 1: Create quote (fail fast if pricing unavailable)
+    const quote = await this.quotesService.createQuote(userId, {
+      usdAmount: dto.usdAmount,
+      asset: dto.paymentCurrency,
+      chain: 'ethereum',
+    });
+
+    // Step 2: Get asset config for token contract address
+    const assetConfig = this.evmService.getAssetConfig(dto.paymentCurrency);
+
+    // Step 3: Get current block number for payment scanning later
+    let creationBlockNumber: number | null = null;
+    try {
+      creationBlockNumber = await this.evmService.getCurrentBlockNumber();
+    } catch (error) {
+      this.logger.warn(`Could not fetch block number: ${error.message}`);
+    }
+
     const sessionDuration = this.configService.get<number>(
-      "PAYMENT_SESSION_DURATION_MINUTES",
+      'PAYMENT_SESSION_DURATION_MINUTES',
       60,
     );
     const expiresAt = new Date(Date.now() + sessionDuration * 60 * 1000);
 
-    const walletAddress =
-      PAYMENT_WALLETS[dto.paymentCurrency] || PAYMENT_WALLETS.USDT;
-
     const customTransactionId =
-      "TXN" +
+      'TXN' +
       Date.now() +
       Math.random().toString(36).substring(2, 6).toUpperCase();
 
+    // Step 4: Atomic DB transaction -- claims index, creates records, marks quote USED
     const result = await this.prisma.$transaction(async (tx) => {
+      // Claim next derivation index with row-level lock
+      const [counter] = await tx.$queryRawUnsafe<{ nextIndex: number }[]>(
+        `UPDATE "DerivationCounter" SET "nextIndex" = "nextIndex" + 1 WHERE id = 1 RETURNING "nextIndex" - 1 AS "nextIndex"`,
+      );
+
+      if (!counter) {
+        throw new InternalServerErrorException(
+          'DerivationCounter not initialized. Run seed or migration.',
+        );
+      }
+
+      const derivationIndex = counter.nextIndex;
+      const derived = this.evmService.deriveDepositAddress(derivationIndex);
+
       const transaction = await tx.transaction.create({
         data: {
           id: customTransactionId,
@@ -84,12 +113,21 @@ export class TransactionsService {
         data: {
           purchaseId: transaction.id,
           userId,
-          walletAddress,
-          expectedAmount: dto.usdAmount,
+          quoteId: quote.id,
+          depositAddress: derived.address,
+          derivationIndex,
+          asset: dto.paymentCurrency.toUpperCase(),
+          tokenContractAddress: assetConfig.contractAddress,
+          expectedAmount: new Prisma.Decimal(dto.usdAmount),
+          expectedAmountBaseUnits: quote.expectedAmountBaseUnits,
           currency: dto.paymentCurrency,
           expiresAt,
+          creationBlockNumber,
         },
       });
+
+      // Mark quote as USED inside this same transaction
+      await this.quotesService.markUsed(quote.id, transaction.id, tx);
 
       if (promoCodeRecord) {
         await tx.promoCode.update({
@@ -98,22 +136,29 @@ export class TransactionsService {
         });
       }
 
-      return { transaction, session };
+      return { transaction, session, derivationIndex, depositAddress: derived.address };
     });
+
+    this.logger.log(
+      `Transaction ${result.transaction.id} created with session ${result.session.id}, deposit: ${result.depositAddress} (index: ${result.derivationIndex})`,
+    );
 
     return {
       transactionId: result.transaction.id,
       sessionId: result.session.id,
-      redirectUrl: `/payment/${result.session.id}`,
+      depositAddress: result.depositAddress,
+      paymentCurrency: dto.paymentCurrency,
+      expectedAmount: quote.expectedAmount,
+      expectedAmountBaseUnits: quote.expectedAmountBaseUnits,
+      expiresAt: expiresAt.toISOString(),
+      status: 'AWAITING_PAYMENT',
+      quoteId: quote.id,
       summary: {
-        paymentCurrency: dto.paymentCurrency,
         usdAmount: dto.usdAmount,
         tokenPrice: currentStage.price,
         tokensAmount,
         bonusTokens,
         totalTokens,
-        walletAddress,
-        expiresAt: expiresAt.toISOString(),
       },
     };
   }
@@ -140,8 +185,8 @@ export class TransactionsService {
     if (params.search) {
       const search = params.search;
       where.OR = [
-        { id: { contains: search, mode: "insensitive" } },
-        { paymentCurrency: { contains: search, mode: "insensitive" } },
+        { id: { contains: search, mode: 'insensitive' } },
+        { paymentCurrency: { contains: search, mode: 'insensitive' } },
       ];
     }
 
@@ -152,23 +197,23 @@ export class TransactionsService {
           stage: { select: { stage: true, price: true } },
           promoCode: { select: { code: true, value: true } },
           session: {
-            select: { id: true, status: true, expiresAt: true },
+            select: {
+              id: true,
+              status: true,
+              expiresAt: true,
+              depositAddress: true,
+              confirmations: true,
+            },
           },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
       this.prisma.transaction.count({ where }),
     ]);
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async findOne(id: string, userId: string) {
@@ -182,7 +227,7 @@ export class TransactionsService {
     });
 
     if (!transaction) {
-      throw new BadRequestException("Transaction not found");
+      throw new BadRequestException('Transaction not found');
     }
 
     return transaction;
@@ -209,11 +254,11 @@ export class TransactionsService {
     if (params.search) {
       const search = params.search;
       where.OR = [
-        { id: { contains: search, mode: "insensitive" } },
-        { paymentCurrency: { contains: search, mode: "insensitive" } },
-        { user: { email: { contains: search, mode: "insensitive" } } },
-        { user: { firstName: { contains: search, mode: "insensitive" } } },
-        { user: { lastName: { contains: search, mode: "insensitive" } } },
+        { id: { contains: search, mode: 'insensitive' } },
+        { paymentCurrency: { contains: search, mode: 'insensitive' } },
+        { user: { email: { contains: search, mode: 'insensitive' } } },
+        { user: { firstName: { contains: search, mode: 'insensitive' } } },
+        { user: { lastName: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -226,22 +271,18 @@ export class TransactionsService {
           },
           stage: { select: { stage: true, price: true } },
           promoCode: { select: { code: true, value: true } },
-          session: { select: { id: true, status: true } },
+          session: {
+            select: { id: true, status: true, depositAddress: true, confirmations: true },
+          },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
       }),
       this.prisma.transaction.count({ where }),
     ]);
 
-    return {
-      data,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
   async getStats() {
@@ -256,10 +297,10 @@ export class TransactionsService {
       this.prisma.transaction.aggregate({ _sum: { usdAmount: true } }),
       this.prisma.transaction.aggregate({ _sum: { totalTokens: true } }),
       this.prisma.transaction.count({
-        where: { status: { in: ["COMPLETED", "CONFIRMED"] } },
+        where: { status: { in: ['COMPLETED', 'CONFIRMED'] } },
       }),
       this.prisma.transaction.count({
-        where: { status: "PENDING" },
+        where: { status: 'PENDING' },
       }),
     ]);
 
@@ -276,20 +317,39 @@ export class TransactionsService {
     const activeTransaction = await this.prisma.transaction.findFirst({
       where: {
         userId,
-        status: "PENDING",
-        session: { status: "AWAITING_PAYMENT" },
+        status: 'PENDING',
+        session: {
+          status: { in: ['AWAITING_PAYMENT', 'PAYMENT_DETECTED'] },
+        },
       },
       include: {
-        session: { select: { id: true, status: true, expiresAt: true } },
+        session: {
+          select: {
+            id: true,
+            status: true,
+            expiresAt: true,
+            depositAddress: true,
+            asset: true,
+            expectedAmountBaseUnits: true,
+            confirmations: true,
+          },
+        },
+        quote: {
+          select: {
+            id: true,
+            expectedAmount: true,
+            expectedAmountBaseUnits: true,
+            asset: true,
+          },
+        },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (!activeTransaction || !activeTransaction.session) {
       return null;
     }
 
-    // Check if the session is actually expired by time
     if (new Date(activeTransaction.session.expiresAt) < new Date()) {
       return null;
     }
@@ -299,6 +359,11 @@ export class TransactionsService {
       transactionId: activeTransaction.id,
       usdAmount: activeTransaction.usdAmount,
       paymentCurrency: activeTransaction.paymentCurrency,
+      depositAddress: activeTransaction.session.depositAddress,
+      expectedAmount: activeTransaction.quote?.expectedAmount,
+      expectedAmountBaseUnits: activeTransaction.session.expectedAmountBaseUnits,
+      status: activeTransaction.session.status,
+      confirmations: activeTransaction.session.confirmations,
       expiresAt: activeTransaction.session.expiresAt,
     };
   }
@@ -311,22 +376,18 @@ export class TransactionsService {
       pendingTransactions,
       completedTransactions,
     ] = await Promise.all([
-      this.prisma.transaction.count({
-        where: { userId },
-      }),
+      this.prisma.transaction.count({ where: { userId } }),
       this.prisma.transaction.aggregate({
-        where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+        where: { userId, status: { in: ['CONFIRMED', 'COMPLETED'] } },
         _sum: { usdAmount: true },
       }),
       this.prisma.transaction.aggregate({
-        where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+        where: { userId, status: { in: ['CONFIRMED', 'COMPLETED'] } },
         _sum: { totalTokens: true },
       }),
+      this.prisma.transaction.count({ where: { userId, status: 'PENDING' } }),
       this.prisma.transaction.count({
-        where: { userId, status: "PENDING" },
-      }),
-      this.prisma.transaction.count({
-        where: { userId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+        where: { userId, status: { in: ['CONFIRMED', 'COMPLETED'] } },
       }),
     ]);
 
@@ -345,7 +406,7 @@ export class TransactionsService {
     });
 
     if (!transaction) {
-      throw new NotFoundException("Transaction not found");
+      throw new NotFoundException('Transaction not found');
     }
 
     return this.prisma.transaction.update({

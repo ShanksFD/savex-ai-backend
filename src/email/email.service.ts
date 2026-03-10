@@ -13,7 +13,7 @@ export class EmailService {
   constructor(private configService: ConfigService) {
     this.fromEmail = this.configService.get<string>(
       "EMAIL_FROM",
-      "noreply@savex.ai",
+      "onboarding@resend.dev",
     );
 
     // Initialize Resend if API key is available

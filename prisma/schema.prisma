@@ -23,9 +23,28 @@ enum TransactionStatus {
 enum SessionStatus {
   AWAITING_PAYMENT
   PAYMENT_DETECTED
+  UNDERPAID
   CONFIRMED
   EXPIRED
   CANCELLED
+  SWEEP_PENDING
+  SWEEPING
+  SETTLED
+  FAILED
+}
+
+enum QuoteStatus {
+  ACTIVE
+  EXPIRED
+  USED
+}
+
+enum SweepStatus {
+  PENDING
+  GAS_SENT
+  SWEEPING
+  COMPLETED
+  FAILED
 }
 
 enum UserStatus {
@@ -43,19 +62,16 @@ model User {
   addedAmount             Float      @default(0)
   role                    Role       @default(USER)
 
-  // Account status
   status                  UserStatus @default(ACTIVE)
   suspendedAt             DateTime?
   suspendedReason         String?
   tokenVersion            Int        @default(0)
 
-  // Email verification
   isEmailVerified         Boolean    @default(false)
   emailVerifiedAt         DateTime?
   verificationToken       String?
   verificationTokenExpiry DateTime?
 
-  // Password reset
   resetToken              String?
   resetTokenExpiry        DateTime?
 
@@ -64,6 +80,7 @@ model User {
 
   transactions Transaction[]
   sessions     PaymentSession[]
+  quotes       Quote[]
 }
 
 model PresaleStage {
@@ -105,24 +122,81 @@ model Transaction {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  user      User          @relation(fields: [userId], references: [id])
-  stage     PresaleStage  @relation(fields: [stageId], references: [id])
-  promoCode PromoCode?    @relation(fields: [promoCodeId], references: [id])
+  user      User           @relation(fields: [userId], references: [id])
+  stage     PresaleStage   @relation(fields: [stageId], references: [id])
+  promoCode PromoCode?     @relation(fields: [promoCodeId], references: [id])
   session   PaymentSession?
+  quote     Quote?
+}
+
+model Quote {
+  id                      String      @id @default(uuid())
+  userId                  String
+  transactionId           String?     @unique
+  usdAmount               Decimal
+  asset                   String
+  chain                   String      @default("ethereum")
+  assetPriceUsd           Decimal
+  expectedAmount          String
+  expectedAmountBaseUnits String
+  tokenDecimals           Int
+  expiresAt               DateTime
+  status                  QuoteStatus @default(ACTIVE)
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+
+  user        User            @relation(fields: [userId], references: [id])
+  transaction Transaction?    @relation(fields: [transactionId], references: [id])
+  sessions    PaymentSession[]
+}
+
+model DerivationCounter {
+  id        Int @id @default(1)
+  nextIndex Int @default(0)
 }
 
 model PaymentSession {
-  id             String        @id @default(uuid())
-  purchaseId     String        @unique
-  userId         String
-  walletAddress  String
-  expectedAmount Float
-  currency       String
-  status         SessionStatus @default(AWAITING_PAYMENT)
-  expiresAt      DateTime
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id                      String        @id @default(uuid())
+  purchaseId              String        @unique
+  userId                  String
+  quoteId                 String?
+  depositAddress          String
+  derivationIndex         Int?
+  asset                   String?
+  tokenContractAddress    String?
+  expectedAmount          Decimal
+  expectedAmountBaseUnits String?
+  receivedAmountBaseUnits String?
+  paymentTxHash           String?
+  confirmations           Int           @default(0)
+  currency                String
+  status                  SessionStatus @default(AWAITING_PAYMENT)
+  expiresAt               DateTime
+  confirmedAt             DateTime?
+  sweptAt                 DateTime?
+  creationBlockNumber     Int?
+  metadata                Json?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
 
-  transaction Transaction @relation(fields: [purchaseId], references: [id])
-  user        User        @relation(fields: [userId], references: [id])
+  transaction Transaction      @relation(fields: [purchaseId], references: [id])
+  user        User             @relation(fields: [userId], references: [id])
+  quote       Quote?           @relation(fields: [quoteId], references: [id])
+  sweepOps    SweepOperation[]
+}
+
+model SweepOperation {
+  id               String      @id @default(uuid())
+  paymentSessionId String
+  asset            String
+  amountBaseUnits  String
+  status           SweepStatus @default(PENDING)
+  sweepTxHash      String?
+  gasTopupTxHash   String?
+  error            String?
+  retryCount       Int         @default(0)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  paymentSession PaymentSession @relation(fields: [paymentSessionId], references: [id])
 }

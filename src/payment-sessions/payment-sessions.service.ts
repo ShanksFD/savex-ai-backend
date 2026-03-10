@@ -1,22 +1,25 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
-} from "@nestjs/common";
-import { Subject } from "rxjs";
-import { filter, map } from "rxjs/operators";
-import { PrismaService } from "../prisma/prisma.service";
-import { SessionStatus, TransactionStatus } from "@prisma/client";
+} from '@nestjs/common';
+import { Subject } from 'rxjs';
+import { filter, map } from 'rxjs/operators';
+import { PrismaService } from '../prisma/prisma.service';
+import { SessionStatus, TransactionStatus } from '@prisma/client';
 
 export interface SessionEvent {
   sessionId: string;
   status: SessionStatus;
   transactionStatus?: TransactionStatus;
   message: string;
+  data?: Record<string, any>;
 }
 
 @Injectable()
 export class PaymentSessionsService {
+  private readonly logger = new Logger(PaymentSessionsService.name);
   private sessionEvents$ = new Subject<SessionEvent>();
 
   constructor(private prisma: PrismaService) {}
@@ -41,16 +44,23 @@ export class PaymentSessionsService {
     });
 
     if (!session) {
-      throw new NotFoundException("Payment session not found");
+      throw new NotFoundException('Payment session not found');
     }
 
     return {
       id: session.id,
-      walletAddress: session.walletAddress,
+      depositAddress: session.depositAddress,
+      asset: session.asset,
       expectedAmount: session.expectedAmount,
+      expectedAmountBaseUnits: session.expectedAmountBaseUnits,
+      receivedAmountBaseUnits: session.receivedAmountBaseUnits,
+      paymentTxHash: session.paymentTxHash,
+      confirmations: session.confirmations,
       currency: session.currency,
       status: session.status,
       expiresAt: session.expiresAt.toISOString(),
+      confirmedAt: session.confirmedAt?.toISOString() ?? null,
+      sweptAt: session.sweptAt?.toISOString() ?? null,
       createdAt: session.createdAt.toISOString(),
       transaction: session.transaction,
     };
@@ -64,6 +74,7 @@ export class PaymentSessionsService {
           status: event.status,
           transactionStatus: event.transactionStatus,
           message: event.message,
+          ...event.data,
           timestamp: new Date().toISOString(),
         }),
       })),
@@ -80,13 +91,11 @@ export class PaymentSessionsService {
     });
 
     if (!session) {
-      throw new NotFoundException("Payment session not found");
+      throw new NotFoundException('Payment session not found');
     }
 
-    if (session.status !== "AWAITING_PAYMENT") {
-      throw new BadRequestException(
-        "Can only cancel sessions awaiting payment",
-      );
+    if (session.status !== 'AWAITING_PAYMENT') {
+      throw new BadRequestException('Can only cancel sessions awaiting payment');
     }
 
     const [updatedSession] = await this.prisma.$transaction([
@@ -104,7 +113,7 @@ export class PaymentSessionsService {
       sessionId: id,
       status: SessionStatus.CANCELLED,
       transactionStatus: TransactionStatus.CANCELLED,
-      message: "Payment session cancelled by user",
+      message: 'Payment session cancelled by user',
     });
 
     return updatedSession;
@@ -139,30 +148,100 @@ export class PaymentSessionsService {
         sessionId: session.id,
         status: SessionStatus.EXPIRED,
         transactionStatus: TransactionStatus.EXPIRED,
-        message: "Payment session has expired",
+        message: 'Payment session has expired',
       });
     }
 
     return expiredSessions.length;
   }
 
-  async confirmPayment(sessionId: string) {
+  async markPaymentDetected(
+    sessionId: string,
+    txHash: string,
+    receivedAmountBaseUnits: string,
+    confirmations: number,
+  ) {
     const session = await this.prisma.paymentSession.findUnique({
       where: { id: sessionId },
     });
+    if (!session) throw new NotFoundException('Session not found');
 
-    if (!session) {
-      throw new NotFoundException("Payment session not found");
+    if (
+      session.status !== SessionStatus.AWAITING_PAYMENT &&
+      session.status !== SessionStatus.PAYMENT_DETECTED
+    ) {
+      return;
     }
 
-    if (session.status !== "AWAITING_PAYMENT") {
-      throw new BadRequestException("Session is not awaiting payment");
-    }
+    await this.prisma.paymentSession.update({
+      where: { id: sessionId },
+      data: {
+        status: SessionStatus.PAYMENT_DETECTED,
+        paymentTxHash: txHash,
+        receivedAmountBaseUnits,
+        confirmations,
+      },
+    });
+
+    this.logger.log(
+      `Payment detected for session ${sessionId}: tx=${txHash} amount=${receivedAmountBaseUnits} confs=${confirmations}`,
+    );
+
+    this.emitSessionEvent({
+      sessionId,
+      status: SessionStatus.PAYMENT_DETECTED,
+      message: 'Payment detected, waiting for confirmations',
+      data: { txHash, receivedAmountBaseUnits, confirmations },
+    });
+  }
+
+  async markUnderpaid(
+    sessionId: string,
+    txHash: string,
+    receivedAmountBaseUnits: string,
+  ) {
+    await this.prisma.paymentSession.update({
+      where: { id: sessionId },
+      data: {
+        status: SessionStatus.UNDERPAID,
+        paymentTxHash: txHash,
+        receivedAmountBaseUnits,
+      },
+    });
+
+    this.logger.warn(
+      `Underpaid session ${sessionId}: tx=${txHash} received=${receivedAmountBaseUnits}`,
+    );
+
+    this.emitSessionEvent({
+      sessionId,
+      status: SessionStatus.UNDERPAID,
+      message: 'Payment received but amount is insufficient',
+      data: { txHash, receivedAmountBaseUnits },
+    });
+  }
+
+  async confirmPayment(
+    sessionId: string,
+    txHash: string,
+    receivedAmountBaseUnits: string,
+    confirmations: number,
+  ) {
+    const session = await this.prisma.paymentSession.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) throw new NotFoundException('Session not found');
 
     await this.prisma.$transaction([
       this.prisma.paymentSession.update({
         where: { id: sessionId },
-        data: { status: SessionStatus.CONFIRMED },
+        data: {
+          status: SessionStatus.SWEEP_PENDING,
+          paymentTxHash: txHash,
+          receivedAmountBaseUnits,
+          confirmations,
+          confirmedAt: new Date(),
+        },
       }),
       this.prisma.transaction.update({
         where: { id: session.purchaseId },
@@ -170,11 +249,104 @@ export class PaymentSessionsService {
       }),
     ]);
 
+    this.logger.log(
+      `Payment confirmed for session ${sessionId}: tx=${txHash} confs=${confirmations} -> SWEEP_PENDING`,
+    );
+
     this.emitSessionEvent({
       sessionId,
-      status: SessionStatus.CONFIRMED,
+      status: SessionStatus.SWEEP_PENDING,
       transactionStatus: TransactionStatus.CONFIRMED,
-      message: "Payment confirmed successfully",
+      message: 'Payment confirmed, awaiting sweep to treasury',
+      data: { txHash, receivedAmountBaseUnits, confirmations },
+    });
+  }
+
+  async markSweeping(sessionId: string) {
+    await this.prisma.paymentSession.update({
+      where: { id: sessionId },
+      data: { status: SessionStatus.SWEEPING },
+    });
+
+    this.logger.log(`Session ${sessionId} -> SWEEPING`);
+
+    this.emitSessionEvent({
+      sessionId,
+      status: SessionStatus.SWEEPING,
+      message: 'Sweep transaction broadcast, awaiting confirmation',
+    });
+  }
+
+  async markSettled(sessionId: string) {
+    const session = await this.prisma.paymentSession.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session) throw new NotFoundException('Session not found');
+
+    await this.prisma.$transaction([
+      this.prisma.paymentSession.update({
+        where: { id: sessionId },
+        data: {
+          status: SessionStatus.SETTLED,
+          sweptAt: new Date(),
+        },
+      }),
+      this.prisma.transaction.update({
+        where: { id: session.purchaseId },
+        data: { status: TransactionStatus.COMPLETED },
+      }),
+    ]);
+
+    this.logger.log(`Session ${sessionId} -> SETTLED`);
+
+    this.emitSessionEvent({
+      sessionId,
+      status: SessionStatus.SETTLED,
+      transactionStatus: TransactionStatus.COMPLETED,
+      message: 'Funds swept to treasury, payment complete',
+    });
+  }
+
+  async markFailed(sessionId: string, error: string) {
+    await this.prisma.paymentSession.update({
+      where: { id: sessionId },
+      data: { status: SessionStatus.FAILED },
+    });
+
+    this.logger.error(`Session ${sessionId} -> FAILED: ${error}`);
+
+    this.emitSessionEvent({
+      sessionId,
+      status: SessionStatus.FAILED,
+      message: `Payment failed: ${error}`,
+    });
+  }
+
+  async getActiveSessions() {
+    return this.prisma.paymentSession.findMany({
+      where: {
+        status: {
+          in: [SessionStatus.AWAITING_PAYMENT, SessionStatus.PAYMENT_DETECTED],
+        },
+      },
+      include: {
+        quote: {
+          select: { expectedAmountBaseUnits: true, asset: true },
+        },
+      },
+    });
+  }
+
+  async getSweepPendingSessions() {
+    return this.prisma.paymentSession.findMany({
+      where: {
+        status: {
+          in: [SessionStatus.SWEEP_PENDING, SessionStatus.SWEEPING],
+        },
+      },
+      include: {
+        sweepOps: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
     });
   }
 }

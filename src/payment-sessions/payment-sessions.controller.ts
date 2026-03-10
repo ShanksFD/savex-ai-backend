@@ -24,7 +24,6 @@ export class PaymentSessionsController {
 
   @Sse(':id/events')
   sessionEvents(@Param('id') id: string): Observable<MessageEvent> {
-    // Heartbeat every 30s to keep connection alive
     const heartbeat$ = interval(30000).pipe(
       map(
         () =>

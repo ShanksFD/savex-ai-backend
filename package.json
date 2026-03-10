@@ -34,7 +34,9 @@
     "pg": "^8.19.0",
     "reflect-metadata": "^0.2.0",
     "resend": "^6.9.3",
-    "rxjs": "^7.0.0"
+    "rxjs": "^7.0.0",
+    "ethers": "^6.0.0",
+    "axios": "^1.0.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.0",
