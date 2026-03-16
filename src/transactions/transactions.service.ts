@@ -294,8 +294,14 @@ export class TransactionsService {
       pendingTransactions,
     ] = await Promise.all([
       this.prisma.transaction.count(),
-      this.prisma.transaction.aggregate({ _sum: { usdAmount: true } }),
-      this.prisma.transaction.aggregate({ _sum: { totalTokens: true } }),
+      this.prisma.transaction.aggregate({
+        _sum: { usdAmount: true },
+        where: { status: { in: ['COMPLETED', 'CONFIRMED'] } },
+      }),
+      this.prisma.transaction.aggregate({
+        _sum: { totalTokens: true },
+        where: { status: { in: ['COMPLETED', 'CONFIRMED'] } },
+      }),
       this.prisma.transaction.count({
         where: { status: { in: ['COMPLETED', 'CONFIRMED'] } },
       }),
@@ -375,6 +381,7 @@ export class TransactionsService {
       totalTokens,
       pendingTransactions,
       completedTransactions,
+      user,
     ] = await Promise.all([
       this.prisma.transaction.count({ where: { userId } }),
       this.prisma.transaction.aggregate({
@@ -389,12 +396,13 @@ export class TransactionsService {
       this.prisma.transaction.count({
         where: { userId, status: { in: ['CONFIRMED', 'COMPLETED'] } },
       }),
+      this.prisma.user.findUnique({ where: { id: userId }, select: { addedAmount: true } }),
     ]);
 
     return {
       transactionCount,
       totalInvested: totalAmount._sum.usdAmount || 0,
-      totalTokens: totalTokens._sum.totalTokens || 0,
+      totalTokens: (totalTokens._sum.totalTokens || 0) + (user?.addedAmount || 0),
       pendingTransactions,
       completedTransactions,
     };

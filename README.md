@@ -88,8 +88,9 @@ Server runs on `http://localhost:3001` with all routes prefixed under `/api`.
 | `PAYMENT_QUOTE_DURATION_MINUTES`   | `15`                            | Quote validity window                              |
 | `PAYMENT_SESSION_DURATION_MINUTES` | `60`                            | Payment session expiry                             |
 | `PAYMENT_CHECK_INTERVAL_SECONDS`   | `30`                            | Blockchain polling interval                        |
-| `MIN_CONFIRMATIONS_ETH`            | `2`                             | Min block confirmations for ETH                    |
-| `MIN_CONFIRMATIONS_ERC20`          | `2`                             | Min block confirmations for ERC-20                 |
+| `MIN_CONFIRMATIONS_ETH`            | `2`                             | Min block confirmations for ETH payment detection  |
+| `MIN_CONFIRMATIONS_ERC20`          | `2`                             | Min block confirmations for ERC-20 payment detection |
+| `MIN_CONFIRMATIONS_SWEEP`          | `1`                             | Min block confirmations for gas topup + sweep tx   |
 | `SWEEP_ENABLED`                    | `true`                          | Enable auto-sweep to treasury                      |
 | `SWEEP_MAX_RETRIES`               | `2`                             | Max automatic retries for pre-broadcast sweep failures before marking session FAILED |
 | `SWEEP_MIN_ETH_RESERVE_WEI`       | `100000000000000`               | Min ETH balance before gas topup for token sweep   |
@@ -206,7 +207,7 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 | POST   | `/api/transactions`                  | JWT   | Create transaction + quote + payment session   |
 | GET    | `/api/transactions`                  | JWT   | Get current user's transactions                |
 | GET    | `/api/transactions/active-session`   | JWT   | Get user's active payment session              |
-| GET    | `/api/transactions/my-stats`         | JWT   | Get user's personal transaction stats          |
+| GET    | `/api/transactions/my-stats`         | JWT   | Get user's personal transaction stats (totalTokens includes admin-granted `addedAmount`) |
 | GET    | `/api/transactions/:id`              | JWT   | Get a specific transaction                     |
 | GET    | `/api/transactions/admin/all`        | Admin | Get all transactions (admin)                   |
 | GET    | `/api/transactions/admin/stats`      | Admin | Get transaction statistics (admin)             |
@@ -271,7 +272,7 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 | GET    | `/api/users/admin-stats` | Admin | Get platform user statistics     |
 | GET    | `/api/users`             | Admin | List all users                   |
 | GET    | `/api/users/:id`         | Admin | Get user details                 |
-| PATCH  | `/api/users/:id`         | Admin | Update a user (including status) |
+| PATCH  | `/api/users/:id`         | Admin | Update a user — patchable fields: `firstName`, `lastName`, `phone`, `status`, `suspendedReason`, `addedAmount` (SVX tokens granted manually) |
 
 ### Admin -- Sweep Manager
 
@@ -371,13 +372,13 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - View all 50 stages with price, bonus %, target, and active status
 - Edit stage parameters (price, bonus, target) via a dialog
 - Activate any stage as the current presale stage (atomically deactivates all others)
-- MetricCards showing active stage number, current token price, bonus %, and total target across all stages
+- MetricCards showing active stage number, current token price, bonus %, and active stage target
 
 ## Database Schema
 
 ### Models
 
-- **User** -- email, password (bcrypt), role (USER/ADMIN), status, email verification, password reset
+- **User** -- email, password (bcrypt), role (USER/ADMIN), status, email verification, password reset, `addedAmount` (admin-granted SVX tokens, included in the user's token balance)
 - **PresaleStage** -- stage number, price, bonus %, target, isActive
 - **PromoCode** -- code, bonus value %, max uses, usage count, isActive, expiresAt
 - **Transaction** -- links user + stage + promo, stores usdAmount, tokenPrice, tokensAmount, bonusTokens, totalTokens, status
@@ -425,7 +426,7 @@ GAS_FUND_ADDRESS=0x...your_gas_fund_address...
 4. Note the `depositAddress` in the response
 5. Send Sepolia ETH to that address using MetaMask or a script
 6. Watch the SSE stream at `/api/payment-sessions/:id/events` for status updates
-7. After 2 confirmations, the session moves to CONFIRMED -> SWEEP_PENDING
+7. After `MIN_CONFIRMATIONS_ETH` confirmations, the session moves to CONFIRMED -> SWEEP_PENDING
 8. The sweep cron sends funds to your treasury address
 
 ## Project Structure

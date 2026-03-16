@@ -251,7 +251,10 @@ export class PaymentSessionsCron {
         );
         return;
       }
-      if (confirmations >= 1) {
+      const minSweepConfs = Number(
+        this.configService.get<number>('MIN_CONFIRMATIONS_SWEEP', 1),
+      );
+      if (confirmations >= minSweepConfs) {
         await this.prisma.sweepOperation.update({
           where: { id: sweepOp.id },
           data: { status: SweepStatus.COMPLETED },
@@ -329,7 +332,6 @@ export class PaymentSessionsCron {
     }
 
     // ── ERC-20 path ──────────────────────────────────────────────────────────
-
     const depositAddress = session.depositAddress;
 
     // Step 1: if gas not yet requested, check balance and top-up
@@ -376,7 +378,10 @@ export class PaymentSessionsCron {
       const gasConfs = await this.evmService.getConfirmations(
         sweepOp.gasTopupTxHash,
       );
-      if (gasConfs < 1) {
+      const minSweepConfs = Number(
+        this.configService.get<number>('MIN_CONFIRMATIONS_SWEEP', 1),
+      );
+      if (gasConfs < minSweepConfs) {
         this.logger.debug(
           `Gas topup pending confirmation for ${depositAddress} (tx=${sweepOp.gasTopupTxHash})`,
         );
@@ -398,12 +403,20 @@ export class PaymentSessionsCron {
 
     if (balance < minGas) {
       const hadGasTopup = !!sweepOp.gasTopupTxHash;
-      this.logger.warn(
-        `Deposit wallet ${depositAddress} has insufficient gas (${balance} wei).` +
-          (hadGasTopup
-            ? ` Gas topup was confirmed but ETH is gone — possible external drain. Check if the HD mnemonic is publicly known.`
-            : ` Waiting for next cron cycle.`),
-      );
+      if (hadGasTopup) {
+        const errorMsg = `Gas topup confirmed but deposit wallet ${depositAddress} still has insufficient gas (${balance} wei) — possible external drain`;
+        this.logger.warn(
+          `${errorMsg}. Check if the HD mnemonic is publicly known.`,
+        );
+        await this.prisma.sweepOperation.update({
+          where: { id: sweepOp.id },
+          data: { status: SweepStatus.FAILED, error: errorMsg },
+        });
+      } else {
+        this.logger.warn(
+          `Deposit wallet ${depositAddress} has insufficient gas (${balance} wei). Waiting for next cron cycle.`,
+        );
+      }
       return;
     }
 

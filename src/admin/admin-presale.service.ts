@@ -15,7 +15,7 @@ export class AdminPresaleService {
   async getStats() {
     const stages = await this.prisma.presaleStage.findMany();
     const activeStage = stages.find((s) => s.isActive) ?? null;
-    const totalTarget = stages.reduce((sum, s) => sum + s.target, 0);
+    const totalTarget = activeStage?.target ?? 0;
     const averagePrice =
       stages.length > 0
         ? stages.reduce((sum, s) => sum + s.price, 0) / stages.length
