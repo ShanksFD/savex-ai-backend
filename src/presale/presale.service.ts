@@ -22,4 +22,16 @@ export class PresaleService {
       orderBy: { stage: 'asc' },
     });
   }
+
+  async getPublicStats() {
+    const transactions = await this.prisma.transaction.findMany({
+      where: { status: { in: ['CONFIRMED', 'COMPLETED'] } },
+      select: { usdAmount: true, userId: true },
+    });
+
+    const totalInvested = transactions.reduce((sum, t) => sum + t.usdAmount, 0);
+    const investorCount = new Set(transactions.map((t) => t.userId)).size;
+
+    return { investorCount, totalInvested };
+  }
 }

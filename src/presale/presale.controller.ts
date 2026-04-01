@@ -14,4 +14,9 @@ export class PresaleController {
   getAllStages() {
     return this.presaleService.getAllStages();
   }
+
+  @Get('public-stats')
+  getPublicStats() {
+    return this.presaleService.getPublicStats();
+  }
 }
