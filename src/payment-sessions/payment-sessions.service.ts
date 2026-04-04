@@ -51,6 +51,7 @@ export class PaymentSessionsService {
       id: session.id,
       depositAddress: session.depositAddress,
       asset: session.asset,
+      tokenContractAddress: session.tokenContractAddress,
       expectedAmount: session.expectedAmount,
       expectedAmountBaseUnits: session.expectedAmountBaseUnits,
       receivedAmountBaseUnits: session.receivedAmountBaseUnits,
