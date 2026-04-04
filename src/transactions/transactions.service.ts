@@ -203,6 +203,7 @@ export class TransactionsService {
               expiresAt: true,
               depositAddress: true,
               confirmations: true,
+              metadata: true,
             },
           },
         },
@@ -272,7 +273,7 @@ export class TransactionsService {
           stage: { select: { stage: true, price: true } },
           promoCode: { select: { code: true, value: true } },
           session: {
-            select: { id: true, status: true, depositAddress: true, confirmations: true },
+            select: { id: true, status: true, depositAddress: true, confirmations: true, metadata: true },
           },
         },
         orderBy: { createdAt: 'desc' },

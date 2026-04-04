@@ -2,7 +2,9 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Param,
+  Body,
   Sse,
   UseGuards,
   MessageEvent,
@@ -47,5 +49,20 @@ export class PaymentSessionsController {
   @UseGuards(AuthGuard('jwt'))
   cancel(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.paymentSessionsService.cancel(id, userId);
+  }
+
+  @Patch(':id/payment-method')
+  @UseGuards(AuthGuard('jwt'))
+  markPaymentMethod(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Body() body: { paymentMethod: 'wallet' | 'manual'; walletAddress?: string },
+  ) {
+    return this.paymentSessionsService.markPaymentMethod(
+      id,
+      userId,
+      body.paymentMethod,
+      body.walletAddress,
+    );
   }
 }

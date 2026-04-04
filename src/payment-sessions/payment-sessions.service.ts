@@ -323,6 +323,37 @@ export class PaymentSessionsService {
     });
   }
 
+  async markPaymentMethod(
+    id: string,
+    userId: string,
+    paymentMethod: 'wallet' | 'manual',
+    walletAddress?: string,
+  ) {
+    const session = await this.prisma.paymentSession.findFirst({
+      where: { id, userId },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Payment session not found');
+    }
+
+    const existingMetadata =
+      session.metadata && typeof session.metadata === 'object'
+        ? (session.metadata as Record<string, unknown>)
+        : {};
+
+    await this.prisma.paymentSession.update({
+      where: { id },
+      data: {
+        metadata: {
+          ...existingMetadata,
+          paymentMethod,
+          ...(walletAddress ? { walletAddress } : {}),
+        },
+      },
+    });
+  }
+
   async getActiveSessions() {
     return this.prisma.paymentSession.findMany({
       where: {
