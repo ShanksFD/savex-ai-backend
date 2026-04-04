@@ -197,8 +197,9 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 
 | Method | Path                         | Auth | Description                  |
 | ------ | ---------------------------- | ---- | ---------------------------- |
-| GET    | `/api/presale/current-stage` | No   | Get the active presale stage |
-| GET    | `/api/presale/stages`        | No   | List all 50 presale stages   |
+| GET    | `/api/presale/current-stage` | No   | Get the active presale stage        |
+| GET    | `/api/presale/stages`        | No   | List all 50 presale stages          |
+| GET    | `/api/presale/public-stats`  | No   | Get public presale stats (totalInvested, investorCount) |
 
 ### Transactions
 
@@ -250,9 +251,10 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 
 | Method | Path                               | Auth | Description                      |
 | ------ | ---------------------------------- | ---- | -------------------------------- |
-| GET    | `/api/payment-sessions/:id`        | JWT  | Get session details              |
-| GET    | `/api/payment-sessions/:id/events` | No   | SSE stream for real-time updates |
-| POST   | `/api/payment-sessions/:id/cancel` | JWT  | Cancel a payment session         |
+| GET    | `/api/payment-sessions/:id`                  | JWT  | Get session details              |
+| GET    | `/api/payment-sessions/:id/events`           | No   | SSE stream for real-time updates |
+| POST   | `/api/payment-sessions/:id/cancel`           | JWT  | Cancel a payment session         |
+| PATCH  | `/api/payment-sessions/:id/payment-method`   | JWT  | Mark payment method (wallet/manual) and optional wallet address |
 
 ### Promo Codes
 
