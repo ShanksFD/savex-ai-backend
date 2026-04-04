@@ -118,7 +118,7 @@ export class TransactionsService {
           derivationIndex,
           asset: dto.paymentCurrency.toUpperCase(),
           tokenContractAddress: assetConfig.contractAddress,
-          expectedAmount: new Prisma.Decimal(dto.usdAmount),
+          expectedAmount: new Prisma.Decimal(quote.expectedAmount),
           expectedAmountBaseUnits: quote.expectedAmountBaseUnits,
           currency: dto.paymentCurrency,
           expiresAt,
