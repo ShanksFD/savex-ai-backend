@@ -7,6 +7,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-08 — User Investment Style Preference
+
+### Added
+- **`InvestmentStyle` enum** (`SAFE`, `GROWTH`, `EXPLORE`) added to Prisma schema.
+- **`investmentStyle` field** on `User` model — defaults to `GROWTH`; persisted in PostgreSQL.
+- **`GET /api/auth/me`** now performs a real database query (via `UsersService.getMe`) and returns `investmentStyle` alongside the user profile.
+- **`PATCH /api/auth/me`** (JWT) — new endpoint allowing the authenticated user to update their own `investmentStyle`. Accepts `{ "investmentStyle": "SAFE" | "GROWTH" | "EXPLORE" }`.
+- **`UpdateMeDto`** (`src/users/dto/update-me.dto.ts`) — validates the `investmentStyle` field as a Prisma enum.
+- `UsersModule` imported into `AuthModule` so `UsersService` is injectable in `AuthController`.
+
+---
+
 ## 2026-04-04
 
 ### Fixed

@@ -52,6 +52,12 @@ enum UserStatus {
   SUSPENDED
 }
 
+enum InvestmentStyle {
+  SAFE
+  GROWTH
+  EXPLORE
+}
+
 model User {
   id                      String     @id @default(uuid())
   email                   String     @unique
@@ -62,6 +68,7 @@ model User {
   addedAmount             Float      @default(0)
   role                    Role       @default(USER)
 
+  investmentStyle         InvestmentStyle @default(GROWTH)
   status                  UserStatus @default(ACTIVE)
   suspendedAt             DateTime?
   suspendedReason         String?

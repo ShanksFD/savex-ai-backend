@@ -186,7 +186,8 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 | POST   | `/api/auth/register`            | No    | Register a new user                    |
 | POST   | `/api/auth/login`               | No    | Login, returns access + refresh tokens |
 | POST   | `/api/auth/refresh`             | No    | Refresh access token                   |
-| GET    | `/api/auth/me`                  | JWT   | Get current authenticated user         |
+| GET    | `/api/auth/me`                  | JWT   | Get current user profile (includes `investmentStyle`) |
+| PATCH  | `/api/auth/me`                  | JWT   | Update current user's `investmentStyle` (`SAFE` \| `GROWTH` \| `EXPLORE`) |
 | GET    | `/api/auth/verify-email`        | No    | Verify user's email address            |
 | POST   | `/api/auth/resend-verification` | No    | Resend email verification link         |
 | POST   | `/api/auth/forgot-password`     | No    | Request a password reset email         |
@@ -380,7 +381,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 
 ### Models
 
-- **User** -- email, password (bcrypt), role (USER/ADMIN), status, email verification, password reset, `addedAmount` (admin-granted SVX tokens, included in the user's token balance)
+- **User** -- email, password (bcrypt), role (USER/ADMIN), status, email verification, password reset, `addedAmount` (admin-granted SVX tokens, included in the user's token balance), `investmentStyle` (user-selectable: SAFE / GROWTH / EXPLORE, default GROWTH)
 - **PresaleStage** -- stage number, price, bonus %, target, isActive
 - **PromoCode** -- code, bonus value %, max uses, usage count, isActive, expiresAt
 - **Transaction** -- links user + stage + promo, stores usdAmount, tokenPrice, tokensAmount, bonusTokens, totalTokens, status
@@ -395,6 +396,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **SessionStatus**: AWAITING_PAYMENT, PAYMENT_DETECTED, UNDERPAID, CONFIRMED, EXPIRED, CANCELLED, SWEEP_PENDING, SWEEPING, SETTLED, FAILED
 - **QuoteStatus**: ACTIVE, EXPIRED, USED
 - **SweepStatus**: PENDING, GAS_SENT, SWEEPING, COMPLETED, FAILED
+- **InvestmentStyle**: SAFE, GROWTH, EXPLORE
 
 ## Sepolia Testing
 

@@ -8,6 +8,7 @@ import { EmailService } from "../email/email.service";
 import * as bcrypt from "bcrypt";
 import { Prisma, Role } from "@prisma/client";
 import { UpdateUserDto } from "./dto/update-user.dto";
+import { UpdateMeDto } from "./dto/update-me.dto";
 import { accountSuspendedTemplate } from "../email/email.templates";
 
 const USER_SELECT = {
@@ -17,6 +18,7 @@ const USER_SELECT = {
   lastName: true,
   phone: true,
   addedAmount: true,
+  investmentStyle: true,
   status: true,
   isEmailVerified: true,
   role: true,
@@ -29,6 +31,27 @@ export class UsersService {
     private prisma: PrismaService,
     private emailService: EmailService,
   ) {}
+
+  async getMe(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: USER_SELECT,
+    });
+
+    if (!user) {
+      throw new NotFoundException("User not found");
+    }
+
+    return user;
+  }
+
+  async updateMe(id: string, dto: UpdateMeDto) {
+    return this.prisma.user.update({
+      where: { id },
+      data: dto,
+      select: USER_SELECT,
+    });
+  }
 
   async findAll(
     params: {

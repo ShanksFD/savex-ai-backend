@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Patch,
   Body,
   Query,
   UseGuards,
@@ -21,10 +22,15 @@ import {
 import { CurrentUser, Roles } from "../common/decorators";
 import { RolesGuard } from "../common/guards";
 import { Role } from "@prisma/client";
+import { UsersService } from "../users/users.service";
+import { UpdateMeDto } from "../users/dto/update-me.dto";
 
 @Controller("auth")
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private usersService: UsersService,
+  ) {}
 
   @Post("register")
   register(@Body() dto: RegisterDto) {
@@ -64,7 +70,13 @@ export class AuthController {
   @UseGuards(AuthGuard("jwt"))
   @Get("me")
   getMe(@CurrentUser() user: any) {
-    return user;
+    return this.usersService.getMe(user.id);
+  }
+
+  @UseGuards(AuthGuard("jwt"))
+  @Patch("me")
+  updateMe(@CurrentUser() user: any, @Body() dto: UpdateMeDto) {
+    return this.usersService.updateMe(user.id, dto);
   }
 
   @UseGuards(AuthGuard("jwt"), RolesGuard)
