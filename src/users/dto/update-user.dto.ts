@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsNumber,
   IsEnum,
+  IsBoolean,
   MaxLength,
   Min,
 } from "class-validator";
@@ -39,4 +40,8 @@ export class UpdateUserDto {
   @IsString()
   @MaxLength(500)
   suspendedReason?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isEmailVerified?: boolean;
 }

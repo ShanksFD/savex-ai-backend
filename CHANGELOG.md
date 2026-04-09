@@ -7,6 +7,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-09 — Admin Can Manually Verify User Emails
+
+### Changed
+- **`UpdateUserDto`** (`src/users/dto/update-user.dto.ts`) — added `isEmailVerified?: boolean` field (validated with `@IsBoolean()`). The existing `PATCH /users/:id` admin endpoint now accepts this field and writes it directly to the database, allowing admins to manually verify or un-verify a user's email.
+
+---
+
 ## 2026-04-08 — User Investment Style Preference
 
 ### Added
