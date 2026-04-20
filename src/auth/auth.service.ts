@@ -10,6 +10,7 @@ import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { ZohoService } from "../zoho/zoho.service";
 import {
   RegisterDto,
   LoginDto,
@@ -29,6 +30,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private emailService: EmailService,
+    private zohoService: ZohoService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -78,6 +80,8 @@ export class AuthService {
       template.subject,
       template.html,
     );
+
+    this.zohoService.upsertContact(user.id);
 
     return {
       message:

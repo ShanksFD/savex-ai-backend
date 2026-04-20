@@ -4,9 +4,10 @@ import { PaymentSessionsController } from './payment-sessions.controller';
 import { PaymentSessionsCron } from './payment-sessions.cron';
 import { EvmModule } from '../evm/evm.module';
 import { QuotesModule } from '../quotes/quotes.module';
+import { ZohoModule } from '../zoho/zoho.module';
 
 @Module({
-  imports: [EvmModule, QuotesModule],
+  imports: [EvmModule, QuotesModule, ZohoModule],
   controllers: [PaymentSessionsController],
   providers: [PaymentSessionsService, PaymentSessionsCron],
   exports: [PaymentSessionsService],

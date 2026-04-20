@@ -10,6 +10,7 @@ import { Prisma, Role } from "@prisma/client";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateMeDto } from "./dto/update-me.dto";
 import { accountSuspendedTemplate } from "../email/email.templates";
+import { ZohoService } from "../zoho/zoho.service";
 
 const USER_SELECT = {
   id: true,
@@ -30,6 +31,7 @@ export class UsersService {
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
+    private zohoService: ZohoService,
   ) {}
 
   async getMe(id: string) {
@@ -264,6 +266,14 @@ export class UsersService {
         template.subject,
         template.html,
       );
+    }
+
+    if (
+      dto.firstName !== undefined ||
+      dto.lastName !== undefined ||
+      dto.addedAmount !== undefined
+    ) {
+      this.zohoService.upsertContact(id);
     }
 
     return updatedUser;

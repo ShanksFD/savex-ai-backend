@@ -8,6 +8,7 @@ import { Subject } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 import { PrismaService } from '../prisma/prisma.service';
 import { SessionStatus, TransactionStatus } from '@prisma/client';
+import { ZohoService } from '../zoho/zoho.service';
 
 export interface SessionEvent {
   sessionId: string;
@@ -22,7 +23,10 @@ export class PaymentSessionsService {
   private readonly logger = new Logger(PaymentSessionsService.name);
   private sessionEvents$ = new Subject<SessionEvent>();
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private zohoService: ZohoService,
+  ) {}
 
   async findOne(id: string, userId: string) {
     const session = await this.prisma.paymentSession.findFirst({
@@ -306,6 +310,8 @@ export class PaymentSessionsService {
       transactionStatus: TransactionStatus.COMPLETED,
       message: 'Funds swept to treasury, payment complete',
     });
+
+    this.zohoService.upsertContact(session.userId);
   }
 
   async markFailed(sessionId: string, error: string) {

@@ -7,6 +7,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-20 — Zoho CRM Integration
+
+### Added
+- **Zoho CRM module** (`src/zoho/`) — `ZohoService` handles OAuth2 token management (in-memory cache with auto-refresh), contact upsert (search by email → create or update), and aggregation of investment data from the database. Errors are caught and logged without surfacing to callers (fire-and-forget).
+- **Contact sync on user registration** — `AuthService.register()` fires `upsertContact` after the verification email is sent. Creates a Zoho Contact with name, email, and phone; `Investor_Status` defaults to `Non-Investor`.
+- **Contact sync on investment settled** — `PaymentSessionsService.markSettled()` fires `upsertContact` after a transaction reaches `COMPLETED`. Updates `Investor_Status` → `Investor`, `Amount_Invested_USD` (sum of all completed transaction USD amounts), and `Total_Tokens_Owned` (sum of completed transaction tokens + admin-granted `addedAmount`).
+- **Contact sync on admin user update** — `UsersService.update()` fires `upsertContact` when `firstName`, `lastName`, or `addedAmount` is patched. Skips sync for status/suspension-only updates.
+- **Zoho env vars** added to `.env.example`: `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, `ZOHO_REFRESH_TOKEN`, `ZOHO_BASE_URL`, `ZOHO_ACCOUNTS_URL`.
+
+### Zoho CRM custom fields required
+The following fields must be created manually in **Zoho CRM → Settings → Modules → Contacts → Fields** before enabling the integration:
+
+| Field Label | API Name | Type |
+|---|---|---|
+| Investor Status | `Investor_Status` | Picklist: Investor / Non-Investor |
+| Amount Invested USD | `Amount_Invested_USD` | Currency / Decimal |
+| Total Tokens Owned | `Total_Tokens_Owned` | Decimal |
+| Added Amount SVX | `Added_Amount_SVX` | Decimal |
+
+---
+
 ## 2026-04-09 — Admin Can Manually Verify User Emails
 
 ### Changed

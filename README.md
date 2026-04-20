@@ -13,6 +13,7 @@ NestJS backend for the SaveX AI token presale platform. Handles authentication, 
 - **Mailing**: Resend API (with SMTP fallback)
 - **Real-time**: Server-Sent Events (SSE)
 - **Scheduling**: `@nestjs/schedule` (payment checking, sweep, session/quote expiry)
+- **CRM**: Zoho CRM API v2 (contact sync via OAuth2 refresh token)
 - **Validation**: `class-validator` + `class-transformer`
 
 ## Prerequisites
@@ -92,6 +93,11 @@ Server runs on `http://localhost:3001` with all routes prefixed under `/api`.
 | `MIN_CONFIRMATIONS_ERC20`          | `2`                             | Min block confirmations for ERC-20 payment detection |
 | `MIN_CONFIRMATIONS_SWEEP`          | `1`                             | Min block confirmations for gas topup + sweep tx   |
 | `SWEEP_ENABLED`                    | `true`                          | Enable auto-sweep to treasury                      |
+| `ZOHO_CLIENT_ID`                   | -                               | Zoho API Console Self-Client ID                    |
+| `ZOHO_CLIENT_SECRET`               | -                               | Zoho API Console Self-Client secret                |
+| `ZOHO_REFRESH_TOKEN`               | -                               | Zoho OAuth2 refresh token (scope: `ZohoCRM.modules.contacts.ALL`) |
+| `ZOHO_BASE_URL`                    | `https://www.zohoapis.com`      | Zoho CRM API base URL (change suffix for EU/AU)    |
+| `ZOHO_ACCOUNTS_URL`                | `https://accounts.zoho.com`     | Zoho OAuth2 token endpoint base URL                |
 | `SWEEP_MAX_RETRIES`               | `2`                             | Max automatic retries for pre-broadcast sweep failures before marking session FAILED |
 | `SWEEP_MIN_ETH_RESERVE_WEI`       | `100000000000000`               | Min ETH balance before gas topup for token sweep   |
 | `GAS_TOPUP_AMOUNT_WEI`            | `500000000000000`               | ETH amount to send for gas topup                   |
@@ -398,6 +404,36 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **SweepStatus**: PENDING, GAS_SENT, SWEEPING, COMPLETED, FAILED
 - **InvestmentStyle**: SAFE, GROWTH, EXPLORE
 
+## Zoho CRM Integration
+
+User data is synced to Zoho CRM Contacts automatically on three events:
+
+| Trigger | Fields synced |
+|---|---|
+| User registers | First Name, Last Name, Phone, Email, Investor Status (`Non-Investor`) |
+| Investment settled (COMPLETED) | + Investor Status (`Investor`), Amount Invested USD, Total Tokens Owned |
+| Admin updates name or `addedAmount` | First Name, Last Name, Added Amount SVX, Total Tokens Owned |
+
+All syncs are fire-and-forget — failures are logged but never block the main request flow.
+
+### Required Zoho Setup
+
+1. Go to **Zoho CRM → Settings → Modules → Contacts → Fields** and create these custom fields:
+
+| Field Label | API Name | Type |
+|---|---|---|
+| Investor Status | `Investor_Status` | Picklist: `Investor` / `Non-Investor` |
+| Amount Invested USD | `Amount_Invested_USD` | Currency / Decimal |
+| Total Tokens Owned | `Total_Tokens_Owned` | Decimal |
+| Added Amount SVX | `Added_Amount_SVX` | Decimal |
+
+2. Go to [api-console.zoho.com](https://api-console.zoho.com) → **Self Client** → create a client.
+3. Generate a refresh token with scope: `ZohoCRM.modules.contacts.ALL`.
+4. Set `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, and `ZOHO_REFRESH_TOKEN` in `.env`.
+5. If your Zoho account is on a non-`.com` data center (EU, AU), update `ZOHO_BASE_URL` and `ZOHO_ACCOUNTS_URL` accordingly.
+
+---
+
 ## Sepolia Testing
 
 ### Setup
@@ -454,6 +490,7 @@ src/
 ├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep)
 ├── admin/                     # Admin endpoints (sweeps, sessions, flow control, presale stages)
 ├── email/                     # Email service (Resend + SMTP)
+├── zoho/                      # Zoho CRM contact sync (OAuth2, upsert)
 └── prisma/                    # PrismaService (global)
 ```
 
