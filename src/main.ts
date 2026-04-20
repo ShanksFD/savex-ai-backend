@@ -21,8 +21,21 @@ async function bootstrap() {
 
   app.useGlobalFilters(new GlobalExceptionFilter());
 
+  const frontendUrl = configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+  const allowedOrigins = [
+    frontendUrl.replace(/\/$/, ''),
+    'http://localhost:3000',
+    'http://localhost:3001',
+  ];
+
   app.enableCors({
-    origin: configService.get<string>('FRONTEND_URL', 'http://localhost:3000'),
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin.replace(/\/$/, ''))) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS blocked: ${origin}`));
+      }
+    },
     credentials: true,
   });
 
