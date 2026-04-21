@@ -7,6 +7,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-21 — Docker & CORS Improvements
+
+### Added
+- **`Dockerfile`** — multi-stage Docker build for the backend. Stage 1 compiles TypeScript and generates the Prisma client; stage 2 produces a lean `node:22-alpine` production image with only runtime dependencies. Built for `linux/amd64` (Render compatibility).
+
+### Fixed
+- **CORS origin handling** (`src/main.ts`) — replaced the single-string `origin` with a callback that strips trailing slashes before comparing, so both `https://www.savexai.com` and `https://www.savexai.com/` are accepted correctly.
+
+---
+
 ## 2026-04-20 — Zoho CRM Integration
 
 ### Added

@@ -170,6 +170,24 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 
 `UNDERPAID` interrupts the flow at the "Detected" step with a warning -- it is never shown as a success state.
 
+## Docker Deployment
+
+The backend ships as a Docker image for production. The `Dockerfile` uses a two-stage build: stage 1 compiles TypeScript and generates the Prisma client; stage 2 produces a lean runtime image.
+
+```bash
+# Build for linux/amd64 (required for Render)
+docker build --platform linux/amd64 -t youruser/savex-backend:latest .
+
+# Push to Docker Hub
+docker push youruser/savex-backend:latest
+```
+
+In Render, select **Existing Image** and point to your Docker Hub image. All environment variables are injected at runtime via Render's environment settings — no `.env` file is baked into the image.
+
+After each code change:
+1. Rebuild and push the image
+2. Trigger a manual deploy in Render
+
 ## NPM Scripts
 
 | Script                    | Description            |
