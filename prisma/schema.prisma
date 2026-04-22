@@ -162,6 +162,12 @@ model DerivationCounter {
   nextIndex Int @default(0)
 }
 
+model TokenPrice {
+  symbol    String   @id
+  priceUsd  Decimal
+  updatedAt DateTime @updatedAt
+}
+
 model PaymentSession {
   id                      String        @id @default(uuid())
   purchaseId              String        @unique

@@ -7,6 +7,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-22 — DB-Cached ETH Price & Registration Email Decoupling
+
+### Added
+- **`TokenPrice` Prisma model** — stores `symbol`, `priceUsd`, and `updatedAt`. Used as the single source of truth for asset prices at quote/transaction time.
+- **`PricingCron`** (`src/pricing/pricing.cron.ts`) — `@nestjs/schedule` cron job that refreshes ETH price from CoinGecko every hour and upserts it into `TokenPrice`. A failed refresh logs an error but leaves the last known price intact.
+- **`prisma migrate deploy`** in `Dockerfile` start command — migrations are now applied automatically on every Render deploy before the app starts.
+
+### Changed
+- **`PricingService.getEthPriceUsd()`** — now reads from the `TokenPrice` DB table instead of calling CoinGecko on every transaction. Falls back to a live CoinGecko fetch only if the DB row is missing or older than 2 hours (cron missed twice). Eliminates 429 rate-limit errors on transaction creation.
+- **`PricingModule`** — now imports `PrismaModule` and registers `PricingCron` as a provider.
+
+### Fixed
+- **Registration blocked by email delivery failure** (`src/auth/auth.service.ts`) — verification email is now sent in the background (fire-and-forget with `.catch()` logging). A Resend rejection (e.g. spam-trap addresses like `test@gmail.com`) or SMTP failure no longer causes `register()` to throw, so the user account is always created and the success response is always returned. Users can trigger resend via the existing `/resend-verification` endpoint.
+
+---
+
 ## 2026-04-21 — Docker & CORS Improvements
 
 ### Added

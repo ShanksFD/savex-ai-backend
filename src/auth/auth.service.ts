@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   ConflictException,
   UnauthorizedException,
   BadRequestException,
@@ -25,6 +26,8 @@ import {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
@@ -75,11 +78,9 @@ export class AuthService {
     const name = [dto.firstName, dto.lastName].filter(Boolean).join(" ");
     const template = verificationEmailTemplate(name, verifyUrl);
 
-    await this.emailService.sendEmail(
-      dto.email,
-      template.subject,
-      template.html,
-    );
+    this.emailService.sendEmail(dto.email, template.subject, template.html).catch((err) => {
+      this.logger.error(`Failed to send verification email to ${dto.email}: ${err.message}`);
+    });
 
     this.zohoService.upsertContact(user.id);
 

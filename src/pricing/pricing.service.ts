@@ -2,6 +2,7 @@ import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { parseEther, parseUnits } from 'ethers';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface QuoteAmount {
   assetPriceUsd: string;
@@ -10,15 +11,17 @@ export interface QuoteAmount {
   tokenDecimals: number;
 }
 
+const MAX_PRICE_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours — cron missed twice
+
 @Injectable()
 export class PricingService {
   private readonly logger = new Logger(PricingService.name);
-  private ethPriceCache: { price: number; fetchedAt: number } | null = null;
-  private readonly cacheTtlMs = 30_000;
+  readonly coingeckoUrl: string;
 
-  private readonly coingeckoUrl: string;
-
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private prisma: PrismaService,
+  ) {
     this.coingeckoUrl = this.configService.get<string>(
       'COINGECKO_API_URL',
       'https://api.coingecko.com/api/v3',
@@ -26,33 +29,36 @@ export class PricingService {
   }
 
   async getEthPriceUsd(): Promise<number> {
-    const now = Date.now();
-    if (this.ethPriceCache && now - this.ethPriceCache.fetchedAt < this.cacheTtlMs) {
-      return this.ethPriceCache.price;
+    const row = await this.prisma.tokenPrice.findUnique({ where: { symbol: 'ETH' } });
+
+    if (row) {
+      const ageMs = Date.now() - row.updatedAt.getTime();
+      if (ageMs < MAX_PRICE_AGE_MS) {
+        return Number(row.priceUsd);
+      }
+      this.logger.warn(`ETH price in DB is ${Math.round(ageMs / 60000)}m old, falling back to live fetch`);
     }
 
-    try {
-      const url = `${this.coingeckoUrl}/simple/price?ids=ethereum&vs_currencies=usd`;
-      const { data } = await axios.get(url, { timeout: 10_000 });
-      const price = data?.ethereum?.usd;
+    return this.fetchAndStoreEthPrice();
+  }
 
-      if (!price || typeof price !== 'number' || price <= 0) {
-        throw new Error(`Invalid ETH price response: ${JSON.stringify(data)}`);
-      }
+  async fetchAndStoreEthPrice(): Promise<number> {
+    const url = `${this.coingeckoUrl}/simple/price?ids=ethereum&vs_currencies=usd`;
+    const { data } = await axios.get(url, { timeout: 10_000 });
+    const price = data?.ethereum?.usd;
 
-      this.ethPriceCache = { price, fetchedAt: now };
-      this.logger.log(`ETH price fetched: $${price}`);
-      return price;
-    } catch (error) {
-      if (this.ethPriceCache) {
-        this.logger.warn(
-          `CoinGecko fetch failed, using stale price: $${this.ethPriceCache.price}`,
-        );
-        return this.ethPriceCache.price;
-      }
-      this.logger.error(`CoinGecko fetch failed with no cached price: ${error.message}`);
-      throw new InternalServerErrorException('Unable to fetch ETH price');
+    if (!price || typeof price !== 'number' || price <= 0) {
+      throw new Error(`Invalid ETH price response: ${JSON.stringify(data)}`);
     }
+
+    await this.prisma.tokenPrice.upsert({
+      where: { symbol: 'ETH' },
+      update: { priceUsd: price },
+      create: { symbol: 'ETH', priceUsd: price },
+    });
+
+    this.logger.log(`ETH price stored: $${price}`);
+    return price;
   }
 
   async getAssetPriceUsd(asset: string): Promise<number> {

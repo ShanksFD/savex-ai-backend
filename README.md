@@ -9,7 +9,7 @@ NestJS backend for the SaveX AI token presale platform. Handles authentication, 
 - **ORM**: Prisma
 - **Auth**: JWT (access + refresh tokens) with token versioning
 - **Blockchain**: ethers.js v6 (HD wallet, ERC-20, tx scanning)
-- **Pricing**: CoinGecko API
+- **Pricing**: CoinGecko API (hourly cron → DB cache; transactions read from DB)
 - **Mailing**: Resend API (with SMTP fallback)
 - **Real-time**: Server-Sent Events (SSE)
 - **Scheduling**: `@nestjs/schedule` (payment checking, sweep, session/quote expiry)
@@ -111,7 +111,7 @@ User Request                  Backend
      |-------------------------->|
      |                           |-- 1. Validate presale stage
      |                           |-- 2. Validate promo code
-     |                           |-- 3. Create locked quote (price snapshot from CoinGecko)
+     |                           |-- 3. Create locked quote (price snapshot from DB cache)
      |                           |-- 4. Derive HD deposit address
      |                           |-- 5. Atomic DB transaction:
      |                           |      - Claim derivation index (row lock)
@@ -187,6 +187,8 @@ In Render, select **Existing Image** and point to your Docker Hub image. All env
 After each code change:
 1. Rebuild and push the image
 2. Trigger a manual deploy in Render
+
+> **Migrations are applied automatically.** The container start command runs `prisma migrate deploy` before starting the app, so no manual migration step is needed on Render.
 
 ## NPM Scripts
 
@@ -413,6 +415,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status
 - **DerivationCounter** -- atomic counter for HD wallet derivation indices
 - **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status, retryCount. Has `@@index([status])` for efficient cron queries.
+- **TokenPrice** -- cached asset prices keyed by symbol (e.g. `ETH`). Updated every hour by `PricingCron`; read by `PricingService` at quote time to avoid live CoinGecko calls on every transaction.
 
 ### Enums
 
@@ -504,7 +507,7 @@ src/
 ├── transactions/              # Transaction creation + history
 ├── payment-sessions/          # Session details, SSE, cancel, cron jobs
 ├── quotes/                    # Internal quote service (price snapshot)
-├── pricing/                   # CoinGecko price fetching
+├── pricing/                   # CoinGecko price fetching + hourly cron cache
 ├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep)
 ├── admin/                     # Admin endpoints (sweeps, sessions, flow control, presale stages)
 ├── email/                     # Email service (Resend + SMTP)
