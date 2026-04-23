@@ -11,7 +11,6 @@ import * as Sentry from '@sentry/nestjs';
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
-    Sentry.captureException(exception);
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
 
@@ -26,6 +25,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
           ? errorResponse
           : (errorResponse as { message: string | string[] }).message ||
             exception.message;
+    }
+
+    if (status >= 500) {
+      Sentry.captureException(exception);
     }
 
     response.status(status).json({
