@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import * as Sentry from '@sentry/nestjs';
 import { PricingService } from './pricing.service';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class PricingCron {
       this.logger.log(`ETH price refreshed: $${price}`);
     } catch (error) {
       this.logger.error(`Failed to refresh ETH price: ${error.message}`);
+      Sentry.captureException(error, { tags: { cron: 'refreshPrices' } });
     }
   }
 }

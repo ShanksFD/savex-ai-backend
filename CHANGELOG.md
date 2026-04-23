@@ -7,6 +7,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-22 — Sentry Integration, DB-Cached ETH Price & Registration Email Decoupling
+
+### Added (Sentry)
+- **`@sentry/nestjs` + `@sentry/profiling-node`** installed.
+- **`src/instrument.ts`** — Sentry initialisation. Imported as the very first line of `main.ts` so it instruments the process before anything else loads. Enabled only when `SENTRY_DSN` is set; safe to deploy without it.
+- **`SENTRY_DSN`** env var — added to `.env.example`. Add to Render environment settings (get from Sentry project → Settings → Client Keys). If unset, Sentry is fully disabled — safe for local dev without configuration.
+- **Global exception filter** (`src/common/filters/http-exception.filter.ts`) — 5xx errors are now forwarded to Sentry automatically. 4xx errors (validation, auth) are intentionally excluded.
+- **`PricingCron`** — `captureException` on ETH price refresh failure, tagged `cron: refreshPrices`.
+- **`PaymentSessionsCron`** — `captureException` on payment check and sweep errors, tagged with `cron` name and `sessionId` for fast lookup.
+
+---
+
 ## 2026-04-22 — DB-Cached ETH Price & Registration Email Decoupling
 
 ### Added

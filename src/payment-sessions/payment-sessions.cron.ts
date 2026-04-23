@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron, CronExpression } from "@nestjs/schedule";
+import * as Sentry from "@sentry/nestjs";
 import { ConfigService } from "@nestjs/config";
 import { SessionStatus, SweepStatus } from "@prisma/client";
 import { PaymentSessionsService } from "./payment-sessions.service";
@@ -51,6 +52,7 @@ export class PaymentSessionsCron {
           this.logger.error(
             `Error checking session ${session.id}: ${error.message}`,
           );
+          Sentry.captureException(error, { tags: { cron: 'checkActivePayments', sessionId: session.id } });
         }
       }
     } finally {
@@ -188,6 +190,7 @@ export class PaymentSessionsCron {
           this.logger.error(
             `Sweep error for session ${session.id}: ${error.message}`,
           );
+          Sentry.captureException(error, { tags: { cron: 'processSweeps', sessionId: session.id } });
         }
       }
     } finally {
