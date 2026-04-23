@@ -13,7 +13,7 @@ export class CreateTransactionDto {
   paymentCurrency: string;
 
   @IsNumber()
-  @Min(5)
+  @Min(100)
   @Max(50000)
   usdAmount: number;
 
