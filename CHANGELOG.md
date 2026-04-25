@@ -7,6 +7,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-23 — Switch ETH Pricing to CryptoCompare
+
+### Changed
+- **`PricingService`** — replaced CoinGecko with CryptoCompare (`/data/price?fsym=ETH&tsyms=USD`). No API key required; free tier allows ~100k calls/month vs CoinGecko's aggressive rate limiting that caused frequent 429s on the hourly cron.
+- **`CRYPTOCOMPARE_API_URL`** env var replaces `COINGECKO_API_URL` (default: `https://min-api.cryptocompare.com`).
+
+---
+
 ## 2026-04-22 — Sentry Integration, DB-Cached ETH Price & Registration Email Decoupling
 
 ### Added (Sentry)

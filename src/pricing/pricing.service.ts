@@ -16,15 +16,15 @@ const MAX_PRICE_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours — cron missed twice
 @Injectable()
 export class PricingService {
   private readonly logger = new Logger(PricingService.name);
-  readonly coingeckoUrl: string;
+  readonly cryptoCompareUrl: string;
 
   constructor(
     private configService: ConfigService,
     private prisma: PrismaService,
   ) {
-    this.coingeckoUrl = this.configService.get<string>(
-      'COINGECKO_API_URL',
-      'https://api.coingecko.com/api/v3',
+    this.cryptoCompareUrl = this.configService.get<string>(
+      'CRYPTOCOMPARE_API_URL',
+      'https://min-api.cryptocompare.com',
     );
   }
 
@@ -43,9 +43,9 @@ export class PricingService {
   }
 
   async fetchAndStoreEthPrice(): Promise<number> {
-    const url = `${this.coingeckoUrl}/simple/price?ids=ethereum&vs_currencies=usd`;
+    const url = `${this.cryptoCompareUrl}/data/price?fsym=ETH&tsyms=USD`;
     const { data } = await axios.get(url, { timeout: 10_000 });
-    const price = data?.ethereum?.usd;
+    const price = data?.USD;
 
     if (!price || typeof price !== 'number' || price <= 0) {
       throw new Error(`Invalid ETH price response: ${JSON.stringify(data)}`);
