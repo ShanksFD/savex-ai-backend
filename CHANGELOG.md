@@ -7,11 +7,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## 2026-04-23 — Switch ETH Pricing to CryptoCompare
+## 2026-04-25 — Switch ETH Pricing to Binance
 
 ### Changed
-- **`PricingService`** — replaced CoinGecko with CryptoCompare (`/data/price?fsym=ETH&tsyms=USD`). No API key required; free tier allows ~100k calls/month vs CoinGecko's aggressive rate limiting that caused frequent 429s on the hourly cron.
-- **`CRYPTOCOMPARE_API_URL`** env var replaces `COINGECKO_API_URL` (default: `https://min-api.cryptocompare.com`).
+- **`PricingService`** — replaced CryptoCompare with Binance (`/api/v3/ticker/price?symbol=ETHUSDT`). No API key required, no rate limit issues.
+- **`BINANCE_API_URL`** env var replaces `CRYPTOCOMPARE_API_URL` (default: `https://api.binance.com`).
+
+---
+
+## 2026-04-23 — Switch ETH Pricing to CryptoCompare (reverted)
+
+### Changed
+- Switched from CoinGecko to CryptoCompare — reverted same day after discovering CryptoCompare now requires an API key for all requests.
 
 ---
 

@@ -16,15 +16,15 @@ const MAX_PRICE_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours — cron missed twice
 @Injectable()
 export class PricingService {
   private readonly logger = new Logger(PricingService.name);
-  readonly cryptoCompareUrl: string;
+  readonly binanceUrl: string;
 
   constructor(
     private configService: ConfigService,
     private prisma: PrismaService,
   ) {
-    this.cryptoCompareUrl = this.configService.get<string>(
-      'CRYPTOCOMPARE_API_URL',
-      'https://min-api.cryptocompare.com',
+    this.binanceUrl = this.configService.get<string>(
+      'BINANCE_API_URL',
+      'https://data-api.binance.vision',
     );
   }
 
@@ -43,11 +43,11 @@ export class PricingService {
   }
 
   async fetchAndStoreEthPrice(): Promise<number> {
-    const url = `${this.cryptoCompareUrl}/data/price?fsym=ETH&tsyms=USD`;
+    const url = `${this.binanceUrl}/api/v3/ticker/price?symbol=ETHUSDT`;
     const { data } = await axios.get(url, { timeout: 10_000 });
-    const price = data?.USD;
+    const price = parseFloat(data?.price);
 
-    if (!price || typeof price !== 'number' || price <= 0) {
+    if (!price || isNaN(price) || price <= 0) {
       throw new Error(`Invalid ETH price response: ${JSON.stringify(data)}`);
     }
 

@@ -9,7 +9,7 @@ NestJS backend for the SaveX AI token presale platform. Handles authentication, 
 - **ORM**: Prisma
 - **Auth**: JWT (access + refresh tokens) with token versioning
 - **Blockchain**: ethers.js v6 (HD wallet, ERC-20, tx scanning)
-- **Pricing**: CryptoCompare API (hourly cron → DB cache; transactions read from DB)
+- **Pricing**: Binance API (hourly cron → DB cache; transactions read from DB)
 - **Mailing**: Resend API (with SMTP fallback)
 - **Real-time**: Server-Sent Events (SSE)
 - **Scheduling**: `@nestjs/schedule` (payment checking, sweep, session/quote expiry)
@@ -73,7 +73,7 @@ Server runs on `http://localhost:3001` with all routes prefixed under `/api`.
 | `NETWORK`                          | `sepolia`                       | Network name (sepolia / mainnet)                   |
 | `CHAIN_ID`                         | `11155111`                      | Chain ID (11155111 = Sepolia, 1 = Mainnet)         |
 | `ALCHEMY_RPC_URL`                  | -                               | Alchemy JSON-RPC endpoint                          |
-| `CRYPTOCOMPARE_API_URL`            | `https://min-api.cryptocompare.com` | CryptoCompare API base URL                     |
+| `BINANCE_API_URL`                  | `https://data-api.binance.vision`   | Binance public market data URL for ETH price   |
 | `TREASURY_ADDRESS`                 | -                               | Treasury wallet (receives swept funds)             |
 | `GAS_FUND_PRIVATE_KEY`             | -                               | Private key for gas funding wallet                 |
 | `GAS_FUND_ADDRESS`                 | -                               | Address of gas funding wallet                      |
@@ -416,7 +416,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status
 - **DerivationCounter** -- atomic counter for HD wallet derivation indices
 - **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status, retryCount. Has `@@index([status])` for efficient cron queries.
-- **TokenPrice** -- cached asset prices keyed by symbol (e.g. `ETH`). Updated every hour by `PricingCron`; read by `PricingService` at quote time to avoid live CryptoCompare calls on every transaction.
+- **TokenPrice** -- cached asset prices keyed by symbol (e.g. `ETH`). Updated every hour by `PricingCron`; read by `PricingService` at quote time to avoid live Binance API calls on every transaction.
 
 ### Enums
 
@@ -509,7 +509,7 @@ src/
 ├── transactions/              # Transaction creation + history
 ├── payment-sessions/          # Session details, SSE, cancel, cron jobs
 ├── quotes/                    # Internal quote service (price snapshot)
-├── pricing/                   # CryptoCompare price fetching + hourly cron cache
+├── pricing/                   # Binance API price fetching + hourly cron cache
 ├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep)
 ├── admin/                     # Admin endpoints (sweeps, sessions, flow control, presale stages)
 ├── email/                     # Email service (Resend + SMTP)
