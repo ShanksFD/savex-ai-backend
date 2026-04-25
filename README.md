@@ -98,6 +98,7 @@ Server runs on `http://localhost:3001` with all routes prefixed under `/api`.
 | `ZOHO_REFRESH_TOKEN`               | -                               | Zoho OAuth2 refresh token (scope: `ZohoCRM.modules.contacts.ALL`) |
 | `ZOHO_BASE_URL`                    | `https://www.zohoapis.com`      | Zoho CRM API base URL (change suffix for EU/AU)    |
 | `ZOHO_ACCOUNTS_URL`                | `https://accounts.zoho.com`     | Zoho OAuth2 token endpoint base URL                |
+| `SENTRY_DSN`                      | -                               | Sentry DSN for error tracking. If unset, Sentry is disabled |
 | `SWEEP_MAX_RETRIES`               | `2`                             | Max automatic retries for pre-broadcast sweep failures before marking session FAILED |
 | `SWEEP_MIN_ETH_RESERVE_WEI`       | `100000000000000`               | Min ETH balance before gas topup for token sweep   |
 | `GAS_TOPUP_AMOUNT_WEI`            | `500000000000000`               | ETH amount to send for gas topup                   |
@@ -494,6 +495,7 @@ GAS_FUND_ADDRESS=0x...your_gas_fund_address...
 
 ```
 src/
+├── instrument.ts              # Sentry initialisation (imported first in main.ts)
 ├── main.ts                    # Entry point, CORS, validation, filters
 ├── app.module.ts              # Root module
 ├── common/
