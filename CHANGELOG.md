@@ -7,6 +7,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-27 — EVM Payment Scanning Optimisation & Alchemy Webhook
+
+### Changed
+- **`EvmPaymentService.checkTokenPayment`** — `MAX_BLOCK_RANGE` increased from 10 to 2000, reducing `eth_getLogs` calls from ~500 to ~3 per session per cron tick.
+- **`EvmPaymentService.checkNativePayment` / `checkTokenPayment`** — both now accept an optional `latestBlock` parameter so the cron can share a single `eth_blockNumber` call across all active sessions instead of one per session.
+- **`PaymentSessionsCron.checkActivePayments`** — fetches `latestBlock` once per tick and passes it to all session checks. Sessions are now processed in parallel batches of 5 (`Promise.all` + concurrency limiter) instead of sequentially.
+- **`PaymentSessionsCron.checkSingleSession`** — uses `lastScannedBlock` persisted on the session to scan only blocks newer than the previous tick. On first check it falls back to `creationBlockNumber`. The high-water mark is written back to the DB after each scan, so each tick costs ~1–3 RPC calls instead of re-scanning from session start.
+- **`PaymentSession` Prisma model** — new `lastScannedBlock Int?` field; migration `20260427011542_add_last_scanned_block` applied.
+
+### Added
+- **`EvmWebhookController`** (`POST /api/webhooks/alchemy/activity`) — receives Alchemy Address Activity webhook pushes. Validates the HMAC-SHA256 signature via `ALCHEMY_WEBHOOK_SIGNING_KEY` (optional; if unset, signature check is skipped for easier local dev).
+- **`EvmWebhookService`** — matches the incoming `toAddress` to an active payment session, runs the same detect/confirm/underpaid logic as the cron, and updates `lastScannedBlock`. This gives sub-2-second payment detection without waiting for the 30s cron tick.
+- **`EvmWebhookModule`** — wires controller + service; imported in `AppModule`.
+- **`ALCHEMY_WEBHOOK_SIGNING_KEY`** env var — optional; get from Alchemy dashboard → Webhooks → signing key.
+
+### Alchemy Webhook Setup
+1. Go to **Alchemy Dashboard → Webhooks → Address Activity**.
+2. Add each deposit address (or use a wildcard for the HD wallet range if supported).
+3. Set the webhook URL to `https://your-domain/api/webhooks/alchemy/activity`.
+4. Copy the **Signing Key** and set `ALCHEMY_WEBHOOK_SIGNING_KEY` in your environment.
+5. The cron continues running as a fallback safety net — you can safely increase its interval to 2 minutes to save additional RPC compute units.
+
+---
+
 ## 2026-04-25 — Switch ETH Pricing to Binance
 
 ### Changed

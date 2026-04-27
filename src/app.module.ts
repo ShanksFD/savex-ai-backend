@@ -9,6 +9,7 @@ import { PresaleModule } from "./presale/presale.module";
 import { PromoCodesModule } from "./promo-codes/promo-codes.module";
 import { TransactionsModule } from "./transactions/transactions.module";
 import { PaymentSessionsModule } from "./payment-sessions/payment-sessions.module";
+import { EvmWebhookModule } from "./evm/evm-webhook.module";
 import { EmailModule } from "./email/email.module";
 import { AdminModule } from "./admin/admin.module";
 
@@ -25,6 +26,7 @@ import { AdminModule } from "./admin/admin.module";
     PromoCodesModule,
     TransactionsModule,
     PaymentSessionsModule,
+    EvmWebhookModule,
     AdminModule,
   ],
 })

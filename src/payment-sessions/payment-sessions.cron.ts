@@ -45,22 +45,31 @@ export class PaymentSessionsCron {
         `Checking ${sessions.length} active session(s) for payments`,
       );
 
-      for (const session of sessions) {
-        try {
-          await this.checkSingleSession(session);
-        } catch (error) {
-          this.logger.error(
-            `Error checking session ${session.id}: ${error.message}`,
-          );
-          Sentry.captureException(error, { tags: { cron: 'checkActivePayments', sessionId: session.id } });
-        }
+      // Fetch once and share across all sessions this tick
+      const latestBlock = await this.evmService.getCurrentBlockNumber();
+
+      const CONCURRENCY = 5;
+      for (let i = 0; i < sessions.length; i += CONCURRENCY) {
+        const batch = sessions.slice(i, i + CONCURRENCY);
+        await Promise.all(
+          batch.map(async (session) => {
+            try {
+              await this.checkSingleSession(session, latestBlock);
+            } catch (error) {
+              this.logger.error(
+                `Error checking session ${session.id}: ${error.message}`,
+              );
+              Sentry.captureException(error, { tags: { cron: 'checkActivePayments', sessionId: session.id } });
+            }
+          }),
+        );
       }
     } finally {
       this.checkingPayments = false;
     }
   }
 
-  private async checkSingleSession(session: any) {
+  private async checkSingleSession(session: any, latestBlock: number) {
     if (
       new Date() > session.expiresAt &&
       session.status === SessionStatus.AWAITING_PAYMENT
@@ -94,6 +103,7 @@ export class PaymentSessionsCron {
             paymentTxHash: null,
             receivedAmountBaseUnits: null,
             confirmations: 0,
+            lastScannedBlock: null,
           },
         });
         return;
@@ -116,22 +126,35 @@ export class PaymentSessionsCron {
       return;
     }
 
-    // Scan for new payment
-    const fromBlock = session.creationBlockNumber ?? 0;
+    // Scan only new blocks since the last tick; fall back to session creation block
+    const fromBlock = session.lastScannedBlock
+      ? session.lastScannedBlock + 1
+      : (session.creationBlockNumber ?? 0);
+
+    // Nothing new to scan yet
+    if (fromBlock > latestBlock) return;
 
     let paymentInfo;
     if (asset === "ETH") {
       paymentInfo = await this.evmService.checkNativePayment(
         session.depositAddress,
         fromBlock,
+        latestBlock,
       );
     } else if (session.tokenContractAddress) {
       paymentInfo = await this.evmService.checkTokenPayment(
         session.depositAddress,
         session.tokenContractAddress,
         fromBlock,
+        latestBlock,
       );
     }
+
+    // Persist the high-water mark so next tick only scans new blocks
+    await this.prisma.paymentSession.update({
+      where: { id: session.id },
+      data: { lastScannedBlock: latestBlock },
+    });
 
     if (!paymentInfo) return;
 

@@ -93,6 +93,7 @@ Server runs on `http://localhost:3001` with all routes prefixed under `/api`.
 | `MIN_CONFIRMATIONS_ERC20`          | `2`                             | Min block confirmations for ERC-20 payment detection |
 | `MIN_CONFIRMATIONS_SWEEP`          | `1`                             | Min block confirmations for gas topup + sweep tx   |
 | `SWEEP_ENABLED`                    | `true`                          | Enable auto-sweep to treasury                      |
+| `ALCHEMY_WEBHOOK_SIGNING_KEY`      | -                               | HMAC signing key from Alchemy Webhooks dashboard (optional but recommended in production) |
 | `ZOHO_CLIENT_ID`                   | -                               | Zoho API Console Self-Client ID                    |
 | `ZOHO_CLIENT_SECRET`               | -                               | Zoho API Console Self-Client secret                |
 | `ZOHO_REFRESH_TOKEN`               | -                               | Zoho OAuth2 refresh token (scope: `ZohoCRM.modules.contacts.ALL`) |
@@ -130,9 +131,14 @@ User Request                  Backend
      |                           |
      |  SSE /payment-sessions/   |
      |       :id/events          |
-     |<..........................|-- Cron (every 30s):
-     |                           |     - Scan blocks for ETH tx / ERC-20 Transfer events
-     |   PAYMENT_DETECTED        |     - Compare received vs expected
+     |<..........................|-- Alchemy Webhook (instant push):
+     |                           |     - Address Activity event received
+     |                           |     - Verifies HMAC signature
+     |   PAYMENT_DETECTED        |     - Detects payment, updates session
+     |<..........................|
+     |                           |-- Cron fallback (every 30s):
+     |                           |     - Scans only new blocks since last tick
+     |                           |     - Parallel batches of 5 sessions
      |<..........................|     - Check confirmations
      |                           |
      |   CONFIRMED /             |     - If confs >= min: CONFIRMED -> SWEEP_PENDING
@@ -354,6 +360,12 @@ Allows modifying: `status`, `paymentTxHash`, `confirmations`, `receivedAmountBas
 | `FAILED`           | AWAITING_PAYMENT, SWEEP_PENDING (admin recovery)          |
 | `SETTLED`          | (no transitions allowed)                                  |
 
+### Webhooks
+
+| Method | Path                                  | Auth | Description                                          |
+| ------ | ------------------------------------- | ---- | ---------------------------------------------------- |
+| POST   | `/api/webhooks/alchemy/activity`      | None | Alchemy Address Activity webhook (HMAC verified)     |
+
 ### Admin -- Presale Stages
 
 | Method | Path                                       | Auth  | Description                                 |
@@ -413,7 +425,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **PromoCode** -- code, bonus value %, max uses, usage count, isActive, expiresAt
 - **Transaction** -- links user + stage + promo, stores usdAmount, tokenPrice, tokensAmount, bonusTokens, totalTokens, status
 - **Quote** -- locked price snapshot: usdAmount (Decimal), asset, chain, assetPriceUsd (Decimal), expectedAmount, expectedAmountBaseUnits, tokenDecimals, expiresAt, status
-- **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status
+- **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status, `lastScannedBlock` (high-water mark for incremental block scanning)
 - **DerivationCounter** -- atomic counter for HD wallet derivation indices
 - **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status, retryCount. Has `@@index([status])` for efficient cron queries.
 - **TokenPrice** -- cached asset prices keyed by symbol (e.g. `ETH`). Updated every hour by `PricingCron`; read by `PricingService` at quote time to avoid live Binance API calls on every transaction.
@@ -510,7 +522,7 @@ src/
 ├── payment-sessions/          # Session details, SSE, cancel, cron jobs
 ├── quotes/                    # Internal quote service (price snapshot)
 ├── pricing/                   # Binance API price fetching + hourly cron cache
-├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep)
+├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep, Alchemy webhook)
 ├── admin/                     # Admin endpoints (sweeps, sessions, flow control, presale stages)
 ├── email/                     # Email service (Resend + SMTP)
 ├── zoho/                      # Zoho CRM contact sync (OAuth2, upsert)

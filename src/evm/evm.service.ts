@@ -82,13 +82,14 @@ export class EvmPaymentService implements OnModuleInit {
   async checkNativePayment(
     address: string,
     fromBlock: number,
+    latestBlock?: number,
   ): Promise<PaymentInfo | null> {
     try {
       // Quick signal: if balance is zero, no payment received
       const balance = await this.provider.getBalance(address);
       if (balance === 0n) return null;
 
-      const latestBlock = await this.provider.getBlockNumber();
+      if (latestBlock === undefined) latestBlock = await this.provider.getBlockNumber();
       // Limit scan to last 200 blocks (~40 min on Ethereum) to avoid excessive RPC calls
       const startBlock = Math.max(fromBlock, latestBlock - 200);
 
@@ -126,13 +127,14 @@ export class EvmPaymentService implements OnModuleInit {
     address: string,
     tokenContractAddress: string,
     fromBlock: number,
+    latestBlock?: number,
   ): Promise<PaymentInfo | null> {
-    const MAX_BLOCK_RANGE = 10;
+    const MAX_BLOCK_RANGE = 2000;
 
     try {
       const contract = new Contract(tokenContractAddress, ERC20_ABI, this.provider);
       const filter = contract.filters.Transfer(null, address);
-      const latestBlock = await this.provider.getBlockNumber();
+      if (latestBlock === undefined) latestBlock = await this.provider.getBlockNumber();
       const startBlock = Math.max(fromBlock, latestBlock - 5000);
 
       // Chunk queries into windows of MAX_BLOCK_RANGE blocks (Alchemy free tier limit)

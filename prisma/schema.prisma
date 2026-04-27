@@ -188,6 +188,7 @@ model PaymentSession {
   confirmedAt             DateTime?
   sweptAt                 DateTime?
   creationBlockNumber     Int?
+  lastScannedBlock        Int?
   metadata                Json?
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
