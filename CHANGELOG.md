@@ -7,6 +7,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-27 — Zoho CRM Reliability Fixes
+
+### Fixed
+- **`src/zoho/zoho.service.ts`** — phone number sanitized before sending to Zoho CRM. Characters outside `[0-9 + \- ( ) .]` are stripped, preventing `INVALID_DATA` rejections for numbers formatted with slashes (e.g. `0170/5550638`). Root cause: Zoho returns HTTP 200 with `status: "error"` in the body — the previous code logged "Contact created" regardless.
+- **Response validation** — `create` and `update` calls now inspect `res.data.data[0].status` and log a proper error if Zoho rejects the record, instead of silently succeeding.
+
+### Added
+- **Sentry capture** (`src/zoho/zoho.service.ts`) — `Sentry.captureException` added for both Zoho API rejections (`status: "error"` in response body) and network/auth exceptions. Tagged with `userId` and `zohoAction` for filtering in Sentry dashboard.
+
+---
+
 ## 2026-04-27 — EVM Payment Scanning Optimisation & Alchemy Webhook
 
 ### Changed
