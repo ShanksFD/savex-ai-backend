@@ -84,6 +84,10 @@ export class ZohoService {
   }
 
   async upsertContact(userId: string): Promise<void> {
+    if (this.configService.get<string>('ZOHO_ENABLED') !== 'true') {
+      this.logger.debug(`Zoho disabled — skipping upsert for user ${userId}`);
+      return;
+    }
     try {
       const [payload, token] = await Promise.all([
         this.computeContactData(userId),
