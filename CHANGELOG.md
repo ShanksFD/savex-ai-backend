@@ -7,6 +7,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-04-28 — Fix ZOHO_ENABLED Guard
+
+### Fixed
+- **`ZohoService.upsertContact`** — guard changed from `!configService.get('ZOHO_ENABLED')` to `!== 'true'`. The previous check treated the string `"false"` as truthy, causing Zoho syncs to fire even when `ZOHO_ENABLED=false` was explicitly set in the environment.
+
+---
+
 ## 2026-04-27 — Tracking Guard (ZOHO_ENABLED / NEXT_PUBLIC_TRACKING_ENABLED)
 
 ### Added
