@@ -7,6 +7,42 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-05-02 — Full Payment Flow Sentry Coverage
+
+### Added
+- **`src/evm/evm.service.ts`** — `Sentry.captureException` added to all blockchain methods:
+  - `checkNativePayment` — ETH payment scan failures now reported (previously logged only, silently returned `null`)
+  - `checkTokenPayment` — ERC-20 Transfer event scan failures now reported
+  - `getConfirmations` — confirmation check failures now reported
+  - `sweepNative` — wrapped in try/catch; captures and rethrows so the cron catch also fires
+  - `sweepToken` — same pattern
+  - `topUpGas` — captures gas fund wallet errors (unconfigured wallet, insufficient balance, RPC failure)
+  - `getBalance` — RPC failures now captured instead of propagating silently
+
+- **`src/payment-sessions/payment-sessions.cron.ts`** — additional Sentry captures inside `processSingleSweep`:
+  - ETH sweep failure (`step: 'sweepNative'`)
+  - ERC-20 sweep failure (`step: 'sweepToken'`)
+  - Gas top-up failure (`step: 'topUpGas'`) — previously warned and silently retried with no Sentry alert
+  - Sweep tx reverted on-chain (`step: 'sweepTxReverted'`) — explicit `new Error` with tx hash in message
+  - Max retries exceeded (`step: 'maxRetriesExceeded'`) — alerts before session is marked FAILED
+
+- **`src/payment-sessions/payment-sessions.service.ts`** — Sentry captures added:
+  - `markFailed` — every session transition to `FAILED` now fires `captureException` tagged with `sessionId`
+  - `markSettled` — Zoho `upsertContact` call wrapped in `.catch()` with `captureException`; can no longer throw synchronously and block settlement
+
+- **`src/transactions/transactions.service.ts`** — block number fetch failure in `create()` now captured (previously only `logger.warn`)
+
+- **`src/quotes/quotes.service.ts`** — Sentry captures added:
+  - `createQuote` — pricing service failure captured before rethrowing
+  - `expireQuotes` — DB `updateMany` failure captured
+
+- **`src/pricing/pricing.service.ts`** — `fetchAndStoreEthPrice` wrapped in try/catch; Binance HTTP errors, timeout, and invalid price responses now captured before rethrowing
+
+### Changed
+- **`src/common/filters/http-exception.filter.ts`** — 4xx errors on `/transactions`, `/payment-sessions`, and `/quotes` routes are now forwarded to Sentry as `level: 'warning'`. This surfaces unexpected mid-flow client errors (expired quote claimed, session not found during cron, etc.) without flooding Sentry with normal auth/validation noise.
+
+---
+
 ## 2026-04-28 — Fix ZOHO_ENABLED Guard
 
 ### Fixed

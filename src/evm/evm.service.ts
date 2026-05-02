@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/nestjs';
 import {
   JsonRpcProvider,
   HDNodeWallet,
@@ -119,6 +120,7 @@ export class EvmPaymentService implements OnModuleInit {
       return null;
     } catch (error) {
       this.logger.error(`checkNativePayment failed for ${address}: ${error.message}`);
+      Sentry.captureException(error, { tags: { method: 'checkNativePayment', address } });
       return null;
     }
   }
@@ -178,6 +180,7 @@ export class EvmPaymentService implements OnModuleInit {
       this.logger.error(
         `checkTokenPayment failed for ${address} / ${tokenContractAddress}: ${error.message}`,
       );
+      Sentry.captureException(error, { tags: { method: 'checkTokenPayment', address, tokenContractAddress } });
       return null;
     }
   }
@@ -199,38 +202,44 @@ export class EvmPaymentService implements OnModuleInit {
       return latestBlock - receipt.blockNumber;
     } catch (error) {
       this.logger.error(`getConfirmations failed for ${txHash}: ${error.message}`);
+      Sentry.captureException(error, { tags: { method: 'getConfirmations', txHash } });
       return 0;
     }
   }
 
   async sweepNative(fromIndex: number, toAddress: string): Promise<string> {
-    const signer = this.getSignerForIndex(fromIndex);
-    const balance = await this.provider.getBalance(signer.address);
+    try {
+      const signer = this.getSignerForIndex(fromIndex);
+      const balance = await this.provider.getBalance(signer.address);
 
-    const gasPrice = (await this.provider.getFeeData()).gasPrice ?? parseUnits('20', 'gwei');
-    const gasLimit = 21000n;
-    const gasCost = gasPrice * gasLimit;
+      const gasPrice = (await this.provider.getFeeData()).gasPrice ?? parseUnits('20', 'gwei');
+      const gasLimit = 21000n;
+      const gasCost = gasPrice * gasLimit;
 
-    const sweepAmount = balance - gasCost;
-    if (sweepAmount <= 0n) {
-      throw new Error(
-        `Insufficient balance to sweep: balance=${formatUnits(balance, 18)} ETH, gasCost=${formatUnits(gasCost, 18)} ETH`,
+      const sweepAmount = balance - gasCost;
+      if (sweepAmount <= 0n) {
+        throw new Error(
+          `Insufficient balance to sweep: balance=${formatUnits(balance, 18)} ETH, gasCost=${formatUnits(gasCost, 18)} ETH`,
+        );
+      }
+
+      this.logger.log(
+        `Sweeping ${formatUnits(sweepAmount, 18)} ETH from ${signer.address} to ${toAddress}`,
       );
+
+      const tx = await signer.sendTransaction({
+        to: toAddress,
+        value: sweepAmount,
+        gasLimit,
+        gasPrice,
+      });
+
+      this.logger.log(`Sweep ETH tx sent: ${tx.hash}`);
+      return tx.hash;
+    } catch (error) {
+      Sentry.captureException(error, { tags: { method: 'sweepNative', fromIndex, toAddress } });
+      throw error;
     }
-
-    this.logger.log(
-      `Sweeping ${formatUnits(sweepAmount, 18)} ETH from ${signer.address} to ${toAddress}`,
-    );
-
-    const tx = await signer.sendTransaction({
-      to: toAddress,
-      value: sweepAmount,
-      gasLimit,
-      gasPrice,
-    });
-
-    this.logger.log(`Sweep ETH tx sent: ${tx.hash}`);
-    return tx.hash;
   }
 
   async sweepToken(
@@ -238,51 +247,66 @@ export class EvmPaymentService implements OnModuleInit {
     tokenContractAddress: string,
     toAddress: string,
   ): Promise<string> {
-    const signer = this.getSignerForIndex(fromIndex);
-    const contract = new Contract(tokenContractAddress, ERC20_ABI, signer);
-    const balance: bigint = await contract.balanceOf(signer.address);
+    try {
+      const signer = this.getSignerForIndex(fromIndex);
+      const contract = new Contract(tokenContractAddress, ERC20_ABI, signer);
+      const balance: bigint = await contract.balanceOf(signer.address);
 
-    if (balance === 0n) {
-      throw new Error(`No token balance to sweep at ${signer.address}`);
+      if (balance === 0n) {
+        throw new Error(`No token balance to sweep at ${signer.address}`);
+      }
+
+      const assetConfig = getAssetConfig(
+        tokenContractAddress === this.configService.get('USDT_CONTRACT_ADDRESS') ? 'USDT' : 'USDC',
+        this.configService,
+      );
+      this.logger.log(
+        `Sweeping ${formatUnits(balance, assetConfig.decimals)} ${assetConfig.symbol} from ${signer.address} to ${toAddress}`,
+      );
+
+      const tx = await contract.transfer(toAddress, balance);
+      this.logger.log(`Sweep token tx sent: ${tx.hash}`);
+      return tx.hash;
+    } catch (error) {
+      Sentry.captureException(error, { tags: { method: 'sweepToken', fromIndex, tokenContractAddress, toAddress } });
+      throw error;
     }
-
-    const assetConfig = getAssetConfig(
-      tokenContractAddress === this.configService.get('USDT_CONTRACT_ADDRESS') ? 'USDT' : 'USDC',
-      this.configService,
-    );
-    this.logger.log(
-      `Sweeping ${formatUnits(balance, assetConfig.decimals)} ${assetConfig.symbol} from ${signer.address} to ${toAddress}`,
-    );
-
-    const tx = await contract.transfer(toAddress, balance);
-    this.logger.log(`Sweep token tx sent: ${tx.hash}`);
-    return tx.hash;
   }
 
   async topUpGas(toAddress: string, amountWei?: string): Promise<string> {
-    if (!this.gasFundWallet) {
-      throw new Error('Gas fund wallet not configured');
+    try {
+      if (!this.gasFundWallet) {
+        throw new Error('Gas fund wallet not configured');
+      }
+
+      const amount = amountWei
+        ? BigInt(amountWei)
+        : BigInt(this.configService.get<string>('GAS_TOPUP_AMOUNT_WEI', '500000000000000'));
+
+      this.logger.log(
+        `Topping up ${formatUnits(amount, 18)} ETH to ${toAddress} from gas fund`,
+      );
+
+      const tx = await this.gasFundWallet.sendTransaction({
+        to: toAddress,
+        value: amount,
+      });
+
+      this.logger.log(`Gas topup tx sent: ${tx.hash}`);
+      return tx.hash;
+    } catch (error) {
+      Sentry.captureException(error, { tags: { method: 'topUpGas', toAddress } });
+      throw error;
     }
-
-    const amount = amountWei
-      ? BigInt(amountWei)
-      : BigInt(this.configService.get<string>('GAS_TOPUP_AMOUNT_WEI', '500000000000000'));
-
-    this.logger.log(
-      `Topping up ${formatUnits(amount, 18)} ETH to ${toAddress} from gas fund`,
-    );
-
-    const tx = await this.gasFundWallet.sendTransaction({
-      to: toAddress,
-      value: amount,
-    });
-
-    this.logger.log(`Gas topup tx sent: ${tx.hash}`);
-    return tx.hash;
   }
 
   async getBalance(address: string): Promise<bigint> {
-    return this.provider.getBalance(address);
+    try {
+      return await this.provider.getBalance(address);
+    } catch (error) {
+      Sentry.captureException(error, { tags: { method: 'getBalance', address } });
+      throw error;
+    }
   }
 
   getAssetConfig(asset: string) {

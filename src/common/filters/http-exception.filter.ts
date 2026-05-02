@@ -29,6 +29,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (status >= 500) {
       Sentry.captureException(exception);
+    } else if (status >= 400) {
+      // Capture 4xx errors from the payment/transaction flow so unexpected client
+      // errors (expired quotes, session not found mid-flow) are visible in Sentry.
+      const request = ctx.getRequest<{ url?: string; method?: string }>();
+      const url = request?.url ?? '';
+      if (
+        url.includes('/transactions') ||
+        url.includes('/payment-sessions') ||
+        url.includes('/quotes')
+      ) {
+        Sentry.captureException(exception, {
+          tags: { statusCode: status, url },
+          level: 'warning',
+        });
+      }
     }
 
     response.status(status).json({

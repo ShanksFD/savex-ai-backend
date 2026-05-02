@@ -1,5 +1,6 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/nestjs';
 import axios from 'axios';
 import { parseEther, parseUnits } from 'ethers';
 import { PrismaService } from '../prisma/prisma.service';
@@ -43,22 +44,27 @@ export class PricingService {
   }
 
   async fetchAndStoreEthPrice(): Promise<number> {
-    const url = `${this.binanceUrl}/api/v3/ticker/price?symbol=ETHUSDT`;
-    const { data } = await axios.get(url, { timeout: 10_000 });
-    const price = parseFloat(data?.price);
+    try {
+      const url = `${this.binanceUrl}/api/v3/ticker/price?symbol=ETHUSDT`;
+      const { data } = await axios.get(url, { timeout: 10_000 });
+      const price = parseFloat(data?.price);
 
-    if (!price || isNaN(price) || price <= 0) {
-      throw new Error(`Invalid ETH price response: ${JSON.stringify(data)}`);
+      if (!price || isNaN(price) || price <= 0) {
+        throw new Error(`Invalid ETH price response: ${JSON.stringify(data)}`);
+      }
+
+      await this.prisma.tokenPrice.upsert({
+        where: { symbol: 'ETH' },
+        update: { priceUsd: price },
+        create: { symbol: 'ETH', priceUsd: price },
+      });
+
+      this.logger.log(`ETH price stored: $${price}`);
+      return price;
+    } catch (error) {
+      Sentry.captureException(error, { tags: { service: 'PricingService', step: 'fetchAndStoreEthPrice' } });
+      throw error;
     }
-
-    await this.prisma.tokenPrice.upsert({
-      where: { symbol: 'ETH' },
-      update: { priceUsd: price },
-      create: { symbol: 'ETH', priceUsd: price },
-    });
-
-    this.logger.log(`ETH price stored: $${price}`);
-    return price;
   }
 
   async getAssetPriceUsd(asset: string): Promise<number> {

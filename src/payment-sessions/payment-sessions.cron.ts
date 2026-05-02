@@ -264,6 +264,10 @@ export class PaymentSessionsCron {
         this.logger.error(
           `Sweep tx ${sweepOp.sweepTxHash} reverted for session ${session.id} — marking FAILED`,
         );
+        Sentry.captureException(
+          new Error(`Sweep tx reverted on-chain: ${sweepOp.sweepTxHash}`),
+          { tags: { cron: 'processSingleSweep', step: 'sweepTxReverted', sessionId: session.id, sweepTxHash: sweepOp.sweepTxHash } },
+        );
         await this.prisma.sweepOperation.update({
           where: { id: sweepOp.id },
           data: {
@@ -309,6 +313,10 @@ export class PaymentSessionsCron {
         this.logger.error(
           `Sweep op ${sweepOp.id} exceeded max retries (${maxRetries}) for session ${session.id} — marking session FAILED`,
         );
+        Sentry.captureException(
+          new Error(`Sweep exceeded max retries (${maxRetries}): ${sweepOp.error}`),
+          { tags: { cron: 'processSingleSweep', step: 'maxRetriesExceeded', sessionId: session.id, sweepOpId: sweepOp.id } },
+        );
         await this.paymentSessionsService.markFailed(
           session.id,
           `Sweep failed after ${maxRetries} retries: ${sweepOp.error}`,
@@ -349,6 +357,7 @@ export class PaymentSessionsCron {
         this.logger.error(
           `Sweep failed for session ${session.id}: ${error.message}`,
         );
+        Sentry.captureException(error, { tags: { cron: 'processSingleSweep', step: 'sweepNative', sessionId: session.id } });
         await this.prisma.sweepOperation.update({
           where: { id: sweepOp.id },
           data: { status: SweepStatus.FAILED, error: error.message },
@@ -389,6 +398,7 @@ export class PaymentSessionsCron {
             `Gas topup failed for ${depositAddress}: ${error.message} — will retry next cycle. ` +
               `Ensure GAS_FUND_PRIVATE_KEY is set and funded with Sepolia ETH.`,
           );
+          Sentry.captureException(error, { tags: { cron: 'processSingleSweep', step: 'topUpGas', sessionId: session.id, depositAddress } });
         }
         return;
       }
@@ -468,6 +478,7 @@ export class PaymentSessionsCron {
       this.logger.error(
         `Sweep failed for session ${session.id}: ${error.message}`,
       );
+      Sentry.captureException(error, { tags: { cron: 'processSingleSweep', step: 'sweepToken', sessionId: session.id } });
       await this.prisma.sweepOperation.update({
         where: { id: sweepOp.id },
         data: { status: SweepStatus.FAILED, error: error.message },

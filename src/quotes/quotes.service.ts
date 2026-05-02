@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/nestjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../pricing/pricing.service';
 import { QuoteStatus } from '@prisma/client';
@@ -27,7 +28,13 @@ export class QuotesService {
   ) {
     const { usdAmount, asset, chain = 'ethereum' } = params;
 
-    const quoteAmount = await this.pricingService.createQuoteAmount(usdAmount, asset);
+    let quoteAmount: Awaited<ReturnType<typeof this.pricingService.createQuoteAmount>>;
+    try {
+      quoteAmount = await this.pricingService.createQuoteAmount(usdAmount, asset);
+    } catch (error) {
+      Sentry.captureException(error, { tags: { service: 'QuotesService', step: 'createQuoteAmount', userId, asset } });
+      throw error;
+    }
 
     const durationMinutes = this.configService.get<number>(
       'PAYMENT_QUOTE_DURATION_MINUTES',
@@ -84,19 +91,24 @@ export class QuotesService {
   }
 
   async expireQuotes(): Promise<number> {
-    const result = await this.prisma.quote.updateMany({
-      where: {
-        status: QuoteStatus.ACTIVE,
-        expiresAt: { lt: new Date() },
-      },
-      data: { status: QuoteStatus.EXPIRED },
-    });
+    try {
+      const result = await this.prisma.quote.updateMany({
+        where: {
+          status: QuoteStatus.ACTIVE,
+          expiresAt: { lt: new Date() },
+        },
+        data: { status: QuoteStatus.EXPIRED },
+      });
 
-    if (result.count > 0) {
-      this.logger.log(`Expired ${result.count} quote(s)`);
+      if (result.count > 0) {
+        this.logger.log(`Expired ${result.count} quote(s)`);
+      }
+
+      return result.count;
+    } catch (error) {
+      Sentry.captureException(error, { tags: { service: 'QuotesService', step: 'expireQuotes' } });
+      throw error;
     }
-
-    return result.count;
   }
 
   async findOne(quoteId: string) {

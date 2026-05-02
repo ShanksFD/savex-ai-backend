@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as Sentry from '@sentry/nestjs';
 import { Prisma, TransactionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PresaleService } from '../presale/presale.service';
@@ -65,6 +66,7 @@ export class TransactionsService {
       creationBlockNumber = await this.evmService.getCurrentBlockNumber();
     } catch (error) {
       this.logger.warn(`Could not fetch block number: ${error.message}`);
+      Sentry.captureException(error, { tags: { service: 'TransactionsService', step: 'getCurrentBlockNumber', userId } });
     }
 
     const sessionDuration = this.configService.get<number>(

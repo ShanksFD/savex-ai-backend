@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import { Subject } from 'rxjs';
 import { filter, map } from 'rxjs/operators';
 import { PrismaService } from '../prisma/prisma.service';
@@ -311,7 +312,10 @@ export class PaymentSessionsService {
       message: 'Funds swept to treasury, payment complete',
     });
 
-    this.zohoService.upsertContact(session.userId);
+    this.zohoService.upsertContact(session.userId).catch((err) => {
+      this.logger.error(`Zoho upsert failed for user ${session.userId} on settlement: ${err.message}`);
+      Sentry.captureException(err, { tags: { service: 'PaymentSessionsService', step: 'zohoUpsertOnSettle', sessionId } });
+    });
   }
 
   async markFailed(sessionId: string, error: string) {
@@ -321,6 +325,9 @@ export class PaymentSessionsService {
     });
 
     this.logger.error(`Session ${sessionId} -> FAILED: ${error}`);
+    Sentry.captureException(new Error(`Session FAILED: ${error}`), {
+      tags: { service: 'PaymentSessionsService', sessionId },
+    });
 
     this.emitSessionEvent({
       sessionId,

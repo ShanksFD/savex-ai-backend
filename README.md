@@ -172,6 +172,37 @@ The frontend stepper shows 4 steps: **Created -> Awaiting Payment -> Detected ->
 
 `UNDERPAID` interrupts the flow at the "Detected" step with a warning -- it is never shown as a success state.
 
+## Sentry Error Tracking
+
+Sentry is enabled when `SENTRY_DSN` is set. If unset, the integration is fully disabled — safe for local development without configuration.
+
+### Coverage
+
+| Layer | What is captured |
+|---|---|
+| **Global HTTP filter** | All 5xx errors automatically; 4xx errors on `/transactions`, `/payment-sessions`, `/quotes` routes (as `warning`) |
+| **Pricing** (`PricingService`) | Binance API failures, timeout, invalid price response in `fetchAndStoreEthPrice` |
+| **Quote creation** (`QuotesService`) | Pricing service failures in `createQuote`; DB failures in `expireQuotes` |
+| **Transaction creation** (`TransactionsService`) | RPC failure when fetching creation block number |
+| **Payment check cron** | Per-session errors in `checkActivePayments`, tagged with `sessionId` |
+| **Sweep cron** | Per-session errors in `processSweeps` (outer), plus granular captures inside `processSingleSweep`: ETH sweep failure, ERC-20 sweep failure, gas top-up failure, sweep tx reverted on-chain, max retries exceeded |
+| **EVM service** | `checkNativePayment`, `checkTokenPayment`, `getConfirmations` failures (RPC errors); `sweepNative`, `sweepToken`, `topUpGas`, `getBalance` failures |
+| **Session lifecycle** | Every `markFailed` transition captured with `sessionId`; Zoho upsert errors on settlement |
+| **Zoho CRM** | API rejections and network errors in `upsertContact`, tagged with `userId` and `zohoAction` |
+
+### Sentry tags reference
+
+All captures include structured tags for fast filtering in the Sentry dashboard:
+
+- `cron` — which cron job fired (`checkActivePayments`, `processSweeps`, `processSingleSweep`, `refreshPrices`)
+- `step` — granular step within a cron run (`sweepNative`, `sweepToken`, `topUpGas`, `sweepTxReverted`, `maxRetriesExceeded`)
+- `sessionId` — payment session UUID
+- `method` — EVM service method name (`checkNativePayment`, `sweepNative`, etc.)
+- `service` — service class name for non-cron captures
+- `userId`, `zohoAction` — Zoho CRM captures
+
+---
+
 ## Docker Deployment
 
 The backend ships as a Docker image for production. The `Dockerfile` uses a two-stage build: stage 1 compiles TypeScript and generates the Prisma client; stage 2 produces a lean runtime image.
