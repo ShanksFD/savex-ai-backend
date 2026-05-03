@@ -14,6 +14,7 @@ import { PromoCodesService } from '../promo-codes/promo-codes.service';
 import { QuotesService } from '../quotes/quotes.service';
 import { EvmPaymentService } from '../evm/evm.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class TransactionsService {
@@ -26,9 +27,17 @@ export class TransactionsService {
     private quotesService: QuotesService,
     private evmService: EvmPaymentService,
     private configService: ConfigService,
+    private settingsService: SettingsService,
   ) {}
 
   async create(userId: string, dto: CreateTransactionDto) {
+    const { minPayment, maxPayment } = await this.settingsService.getPaymentLimits();
+    if (dto.usdAmount < minPayment || dto.usdAmount > maxPayment) {
+      throw new BadRequestException(
+        `Amount must be between $${minPayment} and $${maxPayment}`,
+      );
+    }
+
     const currentStage = await this.presaleService.getCurrentStage();
 
     let promoCodeRecord: { code: string; value: number } | null = null;

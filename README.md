@@ -386,6 +386,21 @@ Allows modifying: `status`, `paymentTxHash`, `confirmations`, `receivedAmountBas
 | `FAILED`           | AWAITING_PAYMENT, SWEEP_PENDING (admin recovery)          |
 | `SETTLED`          | (no transitions allowed)                                  |
 
+### Settings
+
+| Method | Path                              | Auth  | Description                          |
+| ------ | --------------------------------- | ----- | ------------------------------------ |
+| GET    | `/api/settings/payment-limits`    | No    | Get current min/max payment limits   |
+| PATCH  | `/api/settings/payment-limits`    | Admin | Update min/max payment limits        |
+
+#### PATCH /api/settings/payment-limits
+
+```json
+{ "minPayment": 50, "maxPayment": 100000 }
+```
+
+Both fields are required numbers ≥ 1. `minPayment` must be less than `maxPayment` (enforced by `TransactionsService` at transaction creation time). Values are persisted in `AppSetting` and take effect immediately — no restart needed.
+
 ### Admin -- Presale Stages
 
 | Method | Path                                       | Auth  | Description                                 |
@@ -449,6 +464,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **DerivationCounter** -- atomic counter for HD wallet derivation indices
 - **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status, retryCount. Has `@@index([status])` for efficient cron queries.
 - **TokenPrice** -- cached asset prices keyed by symbol (e.g. `ETH`). Updated every hour by `PricingCron`; read by `PricingService` at quote time to avoid live Binance API calls on every transaction.
+- **AppSetting** -- generic key/value store for admin-controlled runtime config. Currently used for `minPayment` and `maxPayment` (USD). Defaults to 100 / 50000 if rows are absent.
 
 ### Enums
 
@@ -544,6 +560,7 @@ src/
 ├── pricing/                   # Binance API price fetching + hourly cron cache
 ├── evm/                       # Ethereum blockchain interaction (HD wallet, tx scanning, sweep)
 ├── admin/                     # Admin endpoints (sweeps, sessions, flow control, presale stages)
+├── settings/                  # Payment limits (GET public / PATCH admin) + AppSetting persistence
 ├── email/                     # Email service (Resend + SMTP)
 ├── zoho/                      # Zoho CRM contact sync (OAuth2, upsert)
 └── prisma/                    # PrismaService (global)

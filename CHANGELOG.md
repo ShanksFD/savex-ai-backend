@@ -7,6 +7,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-05-02 — Dynamic Payment Limits (Admin-Controlled)
+
+### Added
+- **`prisma/schema.prisma`** — New `AppSetting` model (`key String @id`, `value String`, `updatedAt DateTime @updatedAt`) with migration `20260502192707_add_app_settings`.
+- **`src/settings/`** — New `SettingsModule` with:
+  - `SettingsService.getPaymentLimits()` — reads `minPayment` / `maxPayment` keys from `AppSetting`, falling back to defaults (100 / 50000) if not yet set.
+  - `SettingsService.updatePaymentLimits()` — upserts both keys in a single `$transaction`.
+  - `GET /settings/payment-limits` — public endpoint (no auth); used by the frontend purchase form.
+  - `PATCH /settings/payment-limits` — admin-only endpoint (JWT + `ADMIN` role); accepts `{ minPayment, maxPayment }`.
+
+### Changed
+- **`src/transactions/dto/create-transaction.dto.ts`** — Removed static `@Min(100)` / `@Max(50000)` decorators from `usdAmount`. Limits are now dynamic.
+- **`src/transactions/transactions.service.ts`** — `create()` fetches live limits from `SettingsService` and throws `BadRequestException` if `usdAmount` is out of range. The existing global HTTP filter already captures 4xx on `/transactions` as Sentry warnings, so payment limit violations are tracked automatically.
+- **`src/transactions/transactions.module.ts`** — Imports `SettingsModule`.
+- **`src/app.module.ts`** — Imports `SettingsModule`.
+
+---
+
 ## 2026-05-02 — Full Payment Flow Sentry Coverage
 
 ### Added

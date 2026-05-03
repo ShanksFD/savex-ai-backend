@@ -11,6 +11,7 @@ import { TransactionsModule } from "./transactions/transactions.module";
 import { PaymentSessionsModule } from "./payment-sessions/payment-sessions.module";
 import { EmailModule } from "./email/email.module";
 import { AdminModule } from "./admin/admin.module";
+import { SettingsModule } from "./settings/settings.module";
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { AdminModule } from "./admin/admin.module";
     TransactionsModule,
     PaymentSessionsModule,
     AdminModule,
+    SettingsModule,
   ],
 })
 export class AppModule {}
