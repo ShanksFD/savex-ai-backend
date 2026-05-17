@@ -240,18 +240,38 @@ After each code change:
 
 ### Auth
 
-| Method | Path                            | Auth  | Description                            |
-| ------ | ------------------------------- | ----- | -------------------------------------- |
-| POST   | `/api/auth/register`            | No    | Register a new user                    |
-| POST   | `/api/auth/login`               | No    | Login, returns access + refresh tokens |
-| POST   | `/api/auth/refresh`             | No    | Refresh access token                   |
-| GET    | `/api/auth/me`                  | JWT   | Get current user profile (includes `investmentStyle`) |
-| PATCH  | `/api/auth/me`                  | JWT   | Update current user's `investmentStyle` (`SAFE` \| `GROWTH` \| `EXPLORE`) |
-| GET    | `/api/auth/verify-email`        | No    | Verify user's email address            |
-| POST   | `/api/auth/resend-verification` | No    | Resend email verification link         |
-| POST   | `/api/auth/forgot-password`     | No    | Request a password reset email         |
-| POST   | `/api/auth/reset-password`      | No    | Complete password reset                |
-| POST   | `/api/auth/impersonate/:userId` | Admin | Impersonate another user               |
+| Method | Path                              | Auth  | Description                                                                 |
+| ------ | --------------------------------- | ----- | --------------------------------------------------------------------------- |
+| POST   | `/api/auth/register`              | No    | Register a new user                                                         |
+| POST   | `/api/auth/register-and-claim`    | No    | Register + claim a guest purchase session in one request                    |
+| POST   | `/api/auth/login`                 | No    | Login, returns access + refresh tokens                                      |
+| POST   | `/api/auth/refresh`               | No    | Refresh access token                                                        |
+| GET    | `/api/auth/me`                    | JWT   | Get current user profile (includes `investmentStyle`)                       |
+| PATCH  | `/api/auth/me`                    | JWT   | Update current user's `investmentStyle` (`SAFE` \| `GROWTH` \| `EXPLORE`)  |
+| GET    | `/api/auth/verify-email`          | No    | Verify email; returns `accessToken + refreshToken + user` for auto-login    |
+| POST   | `/api/auth/resend-verification`   | No    | Resend email verification link                                              |
+| POST   | `/api/auth/forgot-password`       | No    | Request a password reset email                                              |
+| POST   | `/api/auth/reset-password`        | No    | Complete password reset                                                     |
+| POST   | `/api/auth/impersonate/:userId`   | Admin | Impersonate another user                                                    |
+
+#### POST /api/auth/register-and-claim
+
+Used by the `/claim/:sessionId` frontend page after a guest payment.
+
+**Request:**
+```json
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john@example.com",
+  "phone": "+1234567890",
+  "password": "••••••••",
+  "claimToken": "<64-char hex>",
+  "walletAddress": "0xabc...123"
+}
+```
+
+Creates the user account, sends verification email, and atomically links the guest payment session to the new user. Zoho CRM sync is deferred to email verification so it fires once with the complete investment picture.
 
 ### Presale
 
@@ -266,6 +286,7 @@ After each code change:
 | Method | Path                                 | Auth  | Description                                    |
 | ------ | ------------------------------------ | ----- | ---------------------------------------------- |
 | POST   | `/api/transactions`                  | JWT   | Create transaction + quote + payment session   |
+| POST   | `/api/transactions/guest`            | No    | Create guest transaction (no account required); returns `claimToken` |
 | GET    | `/api/transactions`                  | JWT   | Get current user's transactions                |
 | GET    | `/api/transactions/active-session`   | JWT   | Get user's active payment session              |
 | GET    | `/api/transactions/my-stats`         | JWT   | Get user's personal transaction stats (totalTokens includes admin-granted `addedAmount`) |
@@ -273,6 +294,21 @@ After each code change:
 | GET    | `/api/transactions/admin/all`        | Admin | Get all transactions (admin)                   |
 | GET    | `/api/transactions/admin/stats`      | Admin | Get transaction statistics (admin)             |
 | PATCH  | `/api/transactions/admin/:id/status` | Admin | Update transaction status (admin)              |
+
+#### POST /api/transactions/guest
+
+**Request:**
+```json
+{
+  "paymentCurrency": "USDT",
+  "usdAmount": 200,
+  "walletAddress": "0xabc...123",
+  "email": "buyer@example.com",
+  "promoCode": "SAVEX20"
+}
+```
+
+**Response:** same shape as `POST /api/transactions` plus `"claimToken": "<64-char hex>"`. Store this token; it is the primary proof of ownership for all subsequent guest operations.
 
 #### POST /api/transactions
 
@@ -309,12 +345,35 @@ After each code change:
 
 ### Payment Sessions
 
-| Method | Path                               | Auth | Description                      |
-| ------ | ---------------------------------- | ---- | -------------------------------- |
-| GET    | `/api/payment-sessions/:id`                  | JWT  | Get session details              |
-| GET    | `/api/payment-sessions/:id/events`           | No   | SSE stream for real-time updates |
-| POST   | `/api/payment-sessions/:id/cancel`           | JWT  | Cancel a payment session         |
-| PATCH  | `/api/payment-sessions/:id/payment-method`   | JWT  | Mark payment method (wallet/manual) and optional wallet address |
+All session endpoints accept either `Authorization: Bearer <jwt>` (authenticated users) or `X-Claim-Token: <token>` (guest buyers). The SSE stream remains fully public.
+
+| Method | Path                                              | Auth              | Description                                              |
+| ------ | ------------------------------------------------- | ----------------- | -------------------------------------------------------- |
+| GET    | `/api/payment-sessions/:id`                       | JWT or ClaimToken | Get session details                                      |
+| GET    | `/api/payment-sessions/:id/events`                | No                | SSE stream for real-time status updates                  |
+| POST   | `/api/payment-sessions/:id/cancel`                | JWT or ClaimToken | Cancel a payment session                                 |
+| PATCH  | `/api/payment-sessions/:id/payment-method`        | JWT or ClaimToken | Mark payment method (wallet/manual) and wallet address   |
+| POST   | `/api/payment-sessions/:id/recover-claim-token`   | No                | Issue a fresh claim token via EIP-191 wallet signature   |
+
+#### POST /api/payment-sessions/:id/recover-claim-token
+
+For users who lost their `claimToken` (cleared storage, different device). The caller signs a deterministic message with the wallet they used to pay; the backend verifies the signature and issues a new token.
+
+**Request:**
+```json
+{
+  "walletAddress": "0xabc...123",
+  "message": "Recover my SaveX purchase: <sessionId>",
+  "signature": "0x..."
+}
+```
+
+**Response:**
+```json
+{ "claimToken": "<new 64-char hex>", "sessionId": "<uuid>" }
+```
+
+Requirements: session must be `SETTLED`/`SWEEPING`/`SWEEP_PENDING`/`CONFIRMED`, unclaimed (`claimedAt IS NULL`), and `walletAddress` must match the stored session wallet.
 
 ### Promo Codes
 
@@ -460,7 +519,7 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 - **PromoCode** -- code, bonus value %, max uses, usage count, isActive, expiresAt
 - **Transaction** -- links user + stage + promo, stores usdAmount, tokenPrice, tokensAmount, bonusTokens, totalTokens, status
 - **Quote** -- locked price snapshot: usdAmount (Decimal), asset, chain, assetPriceUsd (Decimal), expectedAmount, expectedAmountBaseUnits, tokenDecimals, expiresAt, status
-- **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status, `lastScannedBlock` (high-water mark for incremental block scanning)
+- **PaymentSession** -- links to transaction + quote, depositAddress, derivationIndex, asset, expectedAmountBaseUnits, receivedAmountBaseUnits, paymentTxHash, confirmations, status, `lastScannedBlock` (high-water mark for incremental block scanning). Guest-session fields: `walletAddress` (indexed), `guestEmail`, `claimToken` (unique), `claimedAt`, `zohoSyncedAt`. `userId` is nullable — null means the session belongs to an unregistered guest buyer.
 - **DerivationCounter** -- atomic counter for HD wallet derivation indices
 - **SweepOperation** -- tracks sweep tx lifecycle: gasTopupTxHash, sweepTxHash, status, retryCount. Has `@@index([status])` for efficient cron queries.
 - **TokenPrice** -- cached asset prices keyed by symbol (e.g. `ETH`). Updated every hour by `PricingCron`; read by `PricingService` at quote time to avoid live Binance API calls on every transaction.
@@ -476,15 +535,16 @@ Accessible at `/dashboard/presale-stages`. Provides a complete admin interface f
 
 ## Zoho CRM Integration
 
-User data is synced to Zoho CRM Contacts automatically on three events:
+User data is synced to Zoho CRM Contacts automatically on these events:
 
-| Trigger | Fields synced |
-|---|---|
-| User registers | First Name, Last Name, Phone, Email, Investor Status (`Non-Investor`) |
-| Investment settled (COMPLETED) | + Investor Status (`Investor`), Amount Invested USD, Total Tokens Owned |
-| Admin updates name or `addedAmount` | First Name, Last Name, Added Amount SVX, Total Tokens Owned |
+| Trigger | Fields synced | Notes |
+|---|---|---|
+| User registers (classic flow) | First Name, Last Name, Phone, Email, Investor Status (`Non-Investor`) | Fires immediately on registration |
+| Investment settled — authenticated user | + Investor Status (`Investor`), Amount Invested USD, Total Tokens Owned | Fires in `markSettled()` when `userId` is set |
+| Email verified — guest buyer | All of the above in one call | Guest settlement skips Zoho; deferred to `verifyEmail()` to fire once with full picture. Guard: `zohoSyncedAt` on session |
+| Admin updates name or `addedAmount` | First Name, Last Name, Added Amount SVX, Total Tokens Owned | — |
 
-All syncs are fire-and-forget — failures are logged but never block the main request flow.
+All syncs are fire-and-forget — failures are logged but never block the main request flow. The `zohoSyncedAt` column on `PaymentSession` prevents double-sync even if `verifyEmail` is called multiple times.
 
 ### Required Zoho Setup
 

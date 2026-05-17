@@ -7,6 +7,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-05-17 — Guest Purchase Sessions & Wallet Signature Recovery
+
+### Added
+
+- **`prisma/schema.prisma`** — five new nullable fields on `PaymentSession`:
+  - `walletAddress String?` — indexed; stores the paying wallet address (normalized to lowercase).
+  - `guestEmail String?` — optional pre-payment email captured on the buy page.
+  - `claimToken String? @unique` — 32-byte hex opaque token returned to the browser; primary ownership proof for all guest session operations.
+  - `claimedAt DateTime?` — non-null once linked to a registered user.
+  - `zohoSyncedAt DateTime?` — non-null once Zoho CRM has been synced for this session; prevents duplicate upserts.
+  - `userId` on `PaymentSession`, `Transaction`, and `Quote` made **nullable** (`String?`) so guest sessions require no user account at creation time. All foreign-key relations use `onDelete: Restrict, onUpdate: Cascade` to prevent accidental orphan deletion.
+- **Migration** `20260514021515_add_guest_purchase_sessions` — makes `userId` nullable on the three models, adds the five new columns, creates `UNIQUE INDEX "PaymentSession_claimToken_key"` and `INDEX "PaymentSession_walletAddress_idx"`.
+- **`src/transactions/dto/create-guest-transaction.dto.ts`** — public DTO: `paymentCurrency`, `usdAmount`, `walletAddress` (EVM address regex), `email?` (optional), `promoCode?`.
+- **`src/transactions/guest-transactions.controller.ts`** — `POST /transactions/guest` (no auth guard). Creates a guest session; returns `{ sessionId, claimToken, depositAddress, expectedAmount, … }`.
+- **`src/transactions/transactions.module.ts`** — `GuestTransactionsController` registered.
+- **`src/transactions/transactions.service.ts`** — `createGuest()` public method (guest path). Generates `claimToken = crypto.randomBytes(32).toString('hex')`, stores `walletAddress` (lowercase) and `guestEmail`, returns token in response. Shared `_create()` private method used by both `create()` (authed) and `createGuest()`.
+- **`src/quotes/quotes.service.ts`** — `createQuote()` now accepts `userId: string | null` for guest sessions.
+- **`SessionCaller` union type** (`src/payment-sessions/payment-sessions.service.ts`) — `{ userId: string } | { claimToken: string }`. All session endpoints resolve the caller from either a JWT user or an `X-Claim-Token` header.
+- **`OptionalJwtAuthGuard`** (inside `payment-sessions.controller.ts`) — extends `AuthGuard('jwt')` but returns `null` instead of throwing when no Bearer token is present. All shared endpoints use this guard + `resolveCaller()` helper.
+- **`paymentSessionsService.claimGuestSessions(userId, claimToken, walletAddress)`** — atomic Prisma transaction: find session by `claimToken` (primary, unique), verify `walletAddress` matches (secondary), update `PaymentSession.userId`, `Transaction.userId`, `Quote.userId`, set `claimedAt`. Rejects if already claimed, wrong wallet, or not a guest session.
+- **`paymentSessionsService.recoverClaimToken(sessionId, walletAddress, message, signature)`** — public endpoint for wallet signature recovery. Uses `ethers.verifyMessage()` to prove wallet ownership, verifies the recovered address matches the session's `walletAddress`, issues a fresh `claimToken` and persists it. Only accepts settled, unclaimed sessions.
+- **`POST /payment-sessions/:id/recover-claim-token`** (no auth) — calls `recoverClaimToken`. Client signs `"Recover my SaveX purchase: {sessionId}"` with wagmi `useSignMessage`; no gas required.
+- **`src/auth/dto/register-and-claim.dto.ts`** — extends `RegisterDto` with `claimToken` (64-char hex) and `walletAddress` (EVM regex).
+- **`POST /auth/register-and-claim`** — creates user account and claims the matching guest session in one request. Zoho sync is **deferred** to email verification so it fires once with the full picture.
+- **`authService.registerAndClaim()`** — calls `createUserAndSendVerification(dto, triggerZoho: false)` then `claimGuestSessions()`.
+- **`authService.verifyEmail()`** — after marking verified, finds all sessions where `claimedAt IS NOT NULL AND zohoSyncedAt IS NULL`, fires a single `zohoService.upsertContact()`, marks `zohoSyncedAt` on all. Also returns `accessToken + refreshToken + user` in the response so the frontend can auto-login.
+- **`src/auth/auth.module.ts`** — `forwardRef(() => PaymentSessionsModule)` added to break circular dependency.
+
+### Changed
+
+- **`paymentSessionsService.markSettled()`** — skips Zoho upsert when `session.userId === null` (guest session not yet claimed). Sets `zohoSyncedAt` after a successful Zoho call for authenticated sessions so `verifyEmail` knows not to double-sync.
+- **`GET /payment-sessions/:id`**, **`POST /payment-sessions/:id/cancel`**, **`PATCH /payment-sessions/:id/payment-method`** — all now accept either JWT (`Authorization: Bearer …`) or `X-Claim-Token` header, serving both authenticated users and guest buyers through the same endpoints.
+- **`walletAddress` normalization** — `.toLowerCase()` applied at every entry point: `createGuest()`, `markPaymentMethod()`, `claimGuestSessions()`, `recoverClaimToken()`.
+
+### Security
+
+- `claimToken` is the **primary** ownership proof. `walletAddress` is a **secondary** verification — it must match but is never used alone to locate or claim a session. A single wallet may legitimately have multiple guest sessions; only the token proves which session belongs to whom.
+- Recovery endpoint signs a session-specific deterministic message, preventing signature replay across sessions.
+- All claim operations reject if `claimedAt` is already set (idempotency guard).
+- `zohoSyncedAt` guard on `verifyEmail` ensures exactly one Zoho upsert per user regardless of retry or race conditions.
+
+---
+
 ## 2026-05-02 — Dynamic Payment Limits (Admin-Controlled)
 
 ### Added
