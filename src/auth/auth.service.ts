@@ -4,6 +4,8 @@ import {
   ConflictException,
   UnauthorizedException,
   BadRequestException,
+  Inject,
+  forwardRef,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import { ConfigService } from "@nestjs/config";
@@ -12,12 +14,14 @@ import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { ZohoService } from "../zoho/zoho.service";
+import { PaymentSessionsService } from "../payment-sessions/payment-sessions.service";
 import {
   RegisterDto,
   LoginDto,
   ForgotPasswordDto,
   ResetPasswordDto,
   ResendVerificationDto,
+  RegisterAndClaimDto,
 } from "./dto";
 import {
   verificationEmailTemplate,
@@ -34,9 +38,26 @@ export class AuthService {
     private configService: ConfigService,
     private emailService: EmailService,
     private zohoService: ZohoService,
+    @Inject(forwardRef(() => PaymentSessionsService))
+    private paymentSessionsService: PaymentSessionsService,
   ) {}
 
-  async register(dto: RegisterDto) {
+  // Create the User row + send the verification email. Shared by both the
+  // classic register path and the Buy Now register-and-claim path.
+  // `triggerZoho` controls whether to push the contact to Zoho immediately.
+  // For guest-claim flows we set this to false: Zoho fires once at verifyEmail
+  // time, after the settled guest session has been linked, so the upsert
+  // includes the full picture (contact + tokens) in a single event.
+  private async createUserAndSendVerification(
+    dto: {
+      email: string;
+      password: string;
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+    },
+    triggerZoho: boolean,
+  ) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: dto.email },
     });
@@ -69,7 +90,6 @@ export class AuthService {
       },
     });
 
-    // Send verification email
     const frontendUrl = this.configService.get<string>(
       "FRONTEND_URL",
       "http://localhost:3000",
@@ -78,11 +98,54 @@ export class AuthService {
     const name = [dto.firstName, dto.lastName].filter(Boolean).join(" ");
     const template = verificationEmailTemplate(name, verifyUrl);
 
-    this.emailService.sendEmail(dto.email, template.subject, template.html).catch((err) => {
-      this.logger.error(`Failed to send verification email to ${dto.email}: ${err.message}`);
-    });
+    this.emailService
+      .sendEmail(dto.email, template.subject, template.html)
+      .catch((err) => {
+        this.logger.error(
+          `Failed to send verification email to ${dto.email}: ${err.message}`,
+        );
+      });
 
-    this.zohoService.upsertContact(user.id);
+    if (triggerZoho) {
+      this.zohoService.upsertContact(user.id);
+    }
+
+    return user;
+  }
+
+  async register(dto: RegisterDto) {
+    const user = await this.createUserAndSendVerification(dto, true);
+    return {
+      message:
+        "Registration successful. Please check your email to verify your account.",
+      user,
+    };
+  }
+
+  // Guest Buy Now flow:
+  //   1. Create the user (Zoho deferred).
+  //   2. Atomically link the guest payment session to this user via claimToken,
+  //      with walletAddress as a secondary verification check.
+  // The single Zoho upsert then happens in verifyEmail so we never trigger
+  // duplicate contacts or premature balance updates.
+  async registerAndClaim(dto: RegisterAndClaimDto) {
+    const user = await this.createUserAndSendVerification(dto, false);
+
+    try {
+      await this.paymentSessionsService.claimGuestSessions(
+        user.id,
+        dto.claimToken,
+        dto.walletAddress,
+      );
+    } catch (err) {
+      // The user record was created but the claim failed. Surface the error
+      // to the caller so they can retry with the right token/wallet; we keep
+      // the user so they can still log in once they verify their email.
+      this.logger.warn(
+        `User ${user.id} registered but claim failed: ${(err as Error).message}`,
+      );
+      throw err;
+    }
 
     return {
       message:
@@ -245,7 +308,55 @@ export class AuthService {
       },
     });
 
-    return { message: "Email verified successfully. You can now log in." };
+    // If this user came in via the Buy Now guest claim flow, they have one
+    // or more claimed-but-not-yet-Zoho-synced settled sessions. Fire a SINGLE
+    // Zoho upsert now (covers contact + transaction totals) and mark the
+    // sessions as synced so we never double-fire.
+    const unsyncedClaimedSessions = await this.prisma.paymentSession.findMany({
+      where: {
+        userId: user.id,
+        claimedAt: { not: null },
+        zohoSyncedAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (unsyncedClaimedSessions.length > 0) {
+      try {
+        await this.zohoService.upsertContact(user.id);
+        await this.prisma.paymentSession.updateMany({
+          where: { id: { in: unsyncedClaimedSessions.map((s) => s.id) } },
+          data: { zohoSyncedAt: new Date() },
+        });
+      } catch (err) {
+        // Don't block verification on Zoho failure; log and let an admin retry.
+        this.logger.error(
+          `Zoho upsert failed at verifyEmail for user ${user.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    // Issue JWTs so the frontend can auto-login the user straight after
+    // verification — removes one extra step from the Buy Now funnel and is
+    // safe because the token is only granted after a valid verification link.
+    const tokens = await this.generateTokens(
+      user.id,
+      user.email,
+      user.role,
+      user.tokenVersion,
+    );
+
+    return {
+      message: "Email verified successfully.",
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+      },
+      ...tokens,
+    };
   }
 
   async resendVerification(dto: ResendVerificationDto) {

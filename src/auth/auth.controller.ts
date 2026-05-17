@@ -18,6 +18,7 @@ import {
   ResetPasswordDto,
   VerifyEmailDto,
   ResendVerificationDto,
+  RegisterAndClaimDto,
 } from "./dto";
 import { CurrentUser, Roles } from "../common/decorators";
 import { RolesGuard } from "../common/guards";
@@ -35,6 +36,13 @@ export class AuthController {
   @Post("register")
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
+  }
+
+  // Buy Now post-payment registration. Creates the user AND links the existing
+  // guest payment session in one call. Zoho sync is deferred to verifyEmail.
+  @Post("register-and-claim")
+  registerAndClaim(@Body() dto: RegisterAndClaimDto) {
+    return this.authService.registerAndClaim(dto);
   }
 
   @Post("login")

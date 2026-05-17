@@ -116,7 +116,7 @@ model PromoCode {
 
 model Transaction {
   id              String            @id @default(uuid())
-  userId          String
+  userId          String?
   stageId         Int
   promoCodeId     String?
   paymentCurrency String
@@ -129,7 +129,7 @@ model Transaction {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  user      User           @relation(fields: [userId], references: [id])
+  user      User?          @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   stage     PresaleStage   @relation(fields: [stageId], references: [id])
   promoCode PromoCode?     @relation(fields: [promoCodeId], references: [id])
   session   PaymentSession?
@@ -138,7 +138,7 @@ model Transaction {
 
 model Quote {
   id                      String      @id @default(uuid())
-  userId                  String
+  userId                  String?
   transactionId           String?     @unique
   usdAmount               Decimal
   asset                   String
@@ -152,7 +152,7 @@ model Quote {
   createdAt               DateTime    @default(now())
   updatedAt               DateTime    @updatedAt
 
-  user        User            @relation(fields: [userId], references: [id])
+  user        User?           @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   transaction Transaction?    @relation(fields: [transactionId], references: [id])
   sessions    PaymentSession[]
 }
@@ -171,7 +171,7 @@ model TokenPrice {
 model PaymentSession {
   id                      String        @id @default(uuid())
   purchaseId              String        @unique
-  userId                  String
+  userId                  String?
   quoteId                 String?
   depositAddress          String
   derivationIndex         Int?
@@ -190,13 +190,22 @@ model PaymentSession {
   creationBlockNumber     Int?
   lastScannedBlock        Int?
   metadata                Json?
+
+  walletAddress           String?
+  guestEmail              String?
+  claimToken              String?       @unique
+  claimedAt               DateTime?
+  zohoSyncedAt            DateTime?
+
   createdAt               DateTime      @default(now())
   updatedAt               DateTime      @updatedAt
 
   transaction Transaction      @relation(fields: [purchaseId], references: [id])
-  user        User             @relation(fields: [userId], references: [id])
+  user        User?            @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   quote       Quote?           @relation(fields: [quoteId], references: [id])
   sweepOps    SweepOperation[]
+
+  @@index([walletAddress])
 }
 
 model SweepOperation {

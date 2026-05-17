@@ -23,7 +23,7 @@ export class QuotesService {
   ) {}
 
   async createQuote(
-    userId: string,
+    userId: string | null,
     params: { usdAmount: number; asset: string; chain?: string },
   ) {
     const { usdAmount, asset, chain = 'ethereum' } = params;
@@ -32,7 +32,7 @@ export class QuotesService {
     try {
       quoteAmount = await this.pricingService.createQuoteAmount(usdAmount, asset);
     } catch (error) {
-      Sentry.captureException(error, { tags: { service: 'QuotesService', step: 'createQuoteAmount', userId, asset } });
+      Sentry.captureException(error, { tags: { service: 'QuotesService', step: 'createQuoteAmount', userId: userId ?? 'guest', asset } });
       throw error;
     }
 

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TransactionsService } from './transactions.service';
 import { TransactionsController } from './transactions.controller';
+import { GuestTransactionsController } from './guest-transactions.controller';
 import { PresaleModule } from '../presale/presale.module';
 import { PromoCodesModule } from '../promo-codes/promo-codes.module';
 import { QuotesModule } from '../quotes/quotes.module';
@@ -9,7 +10,7 @@ import { SettingsModule } from '../settings/settings.module';
 
 @Module({
   imports: [PresaleModule, PromoCodesModule, QuotesModule, EvmModule, SettingsModule],
-  controllers: [TransactionsController],
+  controllers: [TransactionsController, GuestTransactionsController],
   providers: [TransactionsService],
   exports: [TransactionsService],
 })

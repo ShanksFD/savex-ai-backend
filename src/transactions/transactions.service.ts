@@ -6,6 +6,7 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 import * as Sentry from '@sentry/nestjs';
 import { Prisma, TransactionStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,7 +15,18 @@ import { PromoCodesService } from '../promo-codes/promo-codes.service';
 import { QuotesService } from '../quotes/quotes.service';
 import { EvmPaymentService } from '../evm/evm.service';
 import { CreateTransactionDto } from './dto/create-transaction.dto';
+import { CreateGuestTransactionDto } from './dto/create-guest-transaction.dto';
 import { SettingsService } from '../settings/settings.service';
+
+type CreateParams = {
+  userId: string | null;
+  paymentCurrency: string;
+  usdAmount: number;
+  promoCode?: string | null;
+  // Guest-only fields. Ignored when userId is set.
+  walletAddress?: string | null;
+  guestEmail?: string | null;
+};
 
 @Injectable()
 export class TransactionsService {
@@ -31,8 +43,31 @@ export class TransactionsService {
   ) {}
 
   async create(userId: string, dto: CreateTransactionDto) {
+    return this._create({
+      userId,
+      paymentCurrency: dto.paymentCurrency,
+      usdAmount: dto.usdAmount,
+      promoCode: dto.promoCode ?? null,
+    });
+  }
+
+  async createGuest(dto: CreateGuestTransactionDto) {
+    return this._create({
+      userId: null,
+      paymentCurrency: dto.paymentCurrency,
+      usdAmount: dto.usdAmount,
+      promoCode: dto.promoCode ?? null,
+      walletAddress: dto.walletAddress.toLowerCase(),
+      guestEmail: dto.email?.toLowerCase() ?? null,
+    });
+  }
+
+  private async _create(params: CreateParams) {
+    const { userId, paymentCurrency, usdAmount, promoCode } = params;
+    const isGuest = userId === null;
+
     const { minPayment, maxPayment } = await this.settingsService.getPaymentLimits();
-    if (dto.usdAmount < minPayment || dto.usdAmount > maxPayment) {
+    if (usdAmount < minPayment || usdAmount > maxPayment) {
       throw new BadRequestException(
         `Amount must be between $${minPayment} and $${maxPayment}`,
       );
@@ -41,11 +76,11 @@ export class TransactionsService {
     const currentStage = await this.presaleService.getCurrentStage();
 
     let promoCodeRecord: { code: string; value: number } | null = null;
-    if (dto.promoCode) {
-      promoCodeRecord = await this.promoCodesService.validate(dto.promoCode);
+    if (promoCode) {
+      promoCodeRecord = await this.promoCodesService.validate(promoCode);
     }
 
-    const tokensAmount = dto.usdAmount / currentStage.price;
+    const tokensAmount = usdAmount / currentStage.price;
     const stageBonusTokens = (tokensAmount * currentStage.bonus) / 100;
     const promoBonusTokens = promoCodeRecord
       ? (tokensAmount * promoCodeRecord.value) / 100
@@ -61,13 +96,13 @@ export class TransactionsService {
 
     // Step 1: Create quote (fail fast if pricing unavailable)
     const quote = await this.quotesService.createQuote(userId, {
-      usdAmount: dto.usdAmount,
-      asset: dto.paymentCurrency,
+      usdAmount,
+      asset: paymentCurrency,
       chain: 'ethereum',
     });
 
     // Step 2: Get asset config for token contract address
-    const assetConfig = this.evmService.getAssetConfig(dto.paymentCurrency);
+    const assetConfig = this.evmService.getAssetConfig(paymentCurrency);
 
     // Step 3: Get current block number for payment scanning later
     let creationBlockNumber: number | null = null;
@@ -75,7 +110,7 @@ export class TransactionsService {
       creationBlockNumber = await this.evmService.getCurrentBlockNumber();
     } catch (error) {
       this.logger.warn(`Could not fetch block number: ${error.message}`);
-      Sentry.captureException(error, { tags: { service: 'TransactionsService', step: 'getCurrentBlockNumber', userId } });
+      Sentry.captureException(error, { tags: { service: 'TransactionsService', step: 'getCurrentBlockNumber', userId: userId ?? 'guest' } });
     }
 
     const sessionDuration = this.configService.get<number>(
@@ -88,6 +123,10 @@ export class TransactionsService {
       'TXN' +
       Date.now() +
       Math.random().toString(36).substring(2, 6).toUpperCase();
+
+    // Generate a single-use opaque token for guest claim flow.
+    // Primary ownership proof; walletAddress is only secondary verification.
+    const claimToken = isGuest ? crypto.randomBytes(32).toString('hex') : null;
 
     // Step 4: Atomic DB transaction -- claims index, creates records, marks quote USED
     const result = await this.prisma.$transaction(async (tx) => {
@@ -111,8 +150,8 @@ export class TransactionsService {
           userId,
           stageId: currentStage.id,
           promoCodeId: promoCodeEntity?.id || null,
-          paymentCurrency: dto.paymentCurrency,
-          usdAmount: dto.usdAmount,
+          paymentCurrency,
+          usdAmount,
           tokenPrice: currentStage.price,
           tokensAmount,
           bonusTokens,
@@ -127,13 +166,16 @@ export class TransactionsService {
           quoteId: quote.id,
           depositAddress: derived.address,
           derivationIndex,
-          asset: dto.paymentCurrency.toUpperCase(),
+          asset: paymentCurrency.toUpperCase(),
           tokenContractAddress: assetConfig.contractAddress,
           expectedAmount: new Prisma.Decimal(quote.expectedAmount),
           expectedAmountBaseUnits: quote.expectedAmountBaseUnits,
-          currency: dto.paymentCurrency,
+          currency: paymentCurrency,
           expiresAt,
           creationBlockNumber,
+          walletAddress: params.walletAddress ?? null,
+          guestEmail: params.guestEmail ?? null,
+          claimToken,
         },
       });
 
@@ -151,21 +193,23 @@ export class TransactionsService {
     });
 
     this.logger.log(
-      `Transaction ${result.transaction.id} created with session ${result.session.id}, deposit: ${result.depositAddress} (index: ${result.derivationIndex})`,
+      `Transaction ${result.transaction.id} created with session ${result.session.id} (${isGuest ? 'GUEST' : 'AUTH'}), deposit: ${result.depositAddress} (index: ${result.derivationIndex})`,
     );
 
     return {
       transactionId: result.transaction.id,
       sessionId: result.session.id,
+      // claimToken is only returned for guest sessions; authenticated callers ignore it.
+      claimToken,
       depositAddress: result.depositAddress,
-      paymentCurrency: dto.paymentCurrency,
+      paymentCurrency,
       expectedAmount: quote.expectedAmount,
       expectedAmountBaseUnits: quote.expectedAmountBaseUnits,
       expiresAt: expiresAt.toISOString(),
       status: 'AWAITING_PAYMENT',
       quoteId: quote.id,
       summary: {
-        usdAmount: dto.usdAmount,
+        usdAmount,
         tokenPrice: currentStage.price,
         tokensAmount,
         bonusTokens,
