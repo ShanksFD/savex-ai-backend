@@ -7,6 +7,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-05-18 — Sentry Noise Reduction
+
+### Changed
+
+- **`src/instrument.ts`** — added `beforeSend` filter to drop `UnauthorizedException` (401) events from Sentry. These are expected JWT expiry errors, not real application errors, and were creating noise in the issue tracker.
+
+---
+
 ## 2026-05-17 — Guest Purchase Sessions & Wallet Signature Recovery
 
 ### Added
